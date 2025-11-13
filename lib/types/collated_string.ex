@@ -64,4 +64,31 @@ defmodule AshPostgres.CollatedString do
   def dump_to_native(value, constraints) do
     Ash.Type.String.dump_to_native(value, constraints)
   end
+
+  @impl AshPostgres.Type
+  def postgres_reference_expr(expr, constraints, _context) do
+    require Ecto.Query
+
+    collation = Keyword.get(constraints, :collation)
+
+    cond do
+      is_nil(collation) ->
+        {:error, "CollatedString requires a :collation constraint"}
+
+      not is_binary(collation) ->
+        {:error,
+         "CollatedString :collation constraint must be a string, got: #{inspect(collation)}"}
+
+      true ->
+        # Use literal/1 for SQL injection prevention by properly escaping the collation name as a PostgreSQL identifier
+        # Parentheses around expr are critical for correct precedence in complex expressions
+        dynamic =
+          Ecto.Query.dynamic(
+            [],
+            fragment("(?) COLLATE ?", ^expr, literal(^collation))
+          )
+
+        {:ok, dynamic}
+    end
+  end
 end

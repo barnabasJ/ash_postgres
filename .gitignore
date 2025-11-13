@@ -30,3 +30,6 @@ test_migration_path
 test_snapshots_path
 test_tenant_migration_path
 
+# Git worktrees
+.tree/
+
