@@ -204,6 +204,38 @@ defmodule AshPostgres.SqlImplementation do
     end
   end
 
+  # Handle non-bare refs with postgres_reference_expr (e.g., for COLLATE wrapping)
+  def expr(
+        query,
+        %Ash.Query.Ref{
+          attribute: %Ash.Resource.Attribute{
+            type: attr_type,
+            constraints: constraints
+          }
+        } = ref,
+        bindings,
+        embedded?,
+        acc,
+        type
+      ) do
+    if function_exported?(attr_type, :postgres_reference_expr, 3) do
+      # First get the standard column reference
+      case AshSql.Expr.dynamic_expr(query, ref, bindings, embedded?, type, acc) do
+        {:ok, expr, acc} ->
+          # Then let the type wrap it (e.g., with COLLATE)
+          case attr_type.postgres_reference_expr(attr_type, constraints, expr) do
+            {:ok, wrapped_expr} -> {:ok, wrapped_expr, acc}
+            :error -> {:ok, expr, acc}
+          end
+
+        other ->
+          other
+      end
+    else
+      :error
+    end
+  end
+
   def expr(
         query,
         %Ash.Query.Function.Error{} = value,
