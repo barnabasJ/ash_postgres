@@ -184,9 +184,9 @@ defmodule AshPostgres.CollatedString do
 
   ## Parameters
 
-  - `expr` - The Ecto query expression for the column reference
+  - `_type` - The type module (this module, passed by AshPostgres)
   - `constraints` - The constraints for this type instance (must include `:collation`)
-  - `_context` - Query context (unused)
+  - `expr` - The Ecto query dynamic expression for the column reference
 
   ## Returns
 
@@ -199,7 +199,7 @@ defmodule AshPostgres.CollatedString do
   PostgreSQL identifier, preventing SQL injection attacks.
   """
   @impl AshPostgres.Type
-  def postgres_reference_expr(expr, constraints, _context) do
+  def postgres_reference_expr(_type, constraints, expr) do
     require Ecto.Query
 
     collation = Keyword.get(constraints, :collation)
@@ -215,13 +215,10 @@ defmodule AshPostgres.CollatedString do
       true ->
         # Use literal/1 for SQL injection prevention by properly escaping the collation name as a PostgreSQL identifier
         # Parentheses around expr are critical for correct precedence in complex expressions
-        dynamic =
-          Ecto.Query.dynamic(
-            [],
-            fragment("(?) COLLATE ?", ^expr, literal(^collation))
-          )
+        require Ecto.Query
+        import Ecto.Query, only: [dynamic: 1]
 
-        {:ok, dynamic}
+        {:ok, dynamic(fragment("(?) COLLATE ?", ^expr, literal(^collation)))}
     end
   end
 end
