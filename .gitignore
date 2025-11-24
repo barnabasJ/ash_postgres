@@ -33,3 +33,5 @@ test_tenant_migration_path
 # Git worktrees
 .tree/
 
+# scratch files
+test/scratch_test.exs

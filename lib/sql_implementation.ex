@@ -191,13 +191,22 @@ defmodule AshPostgres.SqlImplementation do
         acc,
         type
       ) do
-    if function_exported?(attr_type, :postgres_reference_expr, 3) do
-      non_bare_ref = %{ref | bare?: nil}
-      {expr, acc} = AshSql.Expr.dynamic_expr(query, non_bare_ref, bindings, embedded?, type, acc)
+    # Only process if attr_type is an atom (not a tuple like {:array, Type})
+    if is_atom(attr_type) do
+      Code.ensure_loaded!(attr_type)
 
-      case attr_type.postgres_reference_expr(attr_type, constraints, expr) do
-        {:ok, bare_expr} -> {:ok, bare_expr, acc}
-        :error -> :error
+      if function_exported?(attr_type, :postgres_reference_expr, 3) do
+        non_bare_ref = %{ref | bare?: nil}
+
+        {expr, acc} =
+          AshSql.Expr.dynamic_expr(query, non_bare_ref, bindings, embedded?, type, acc)
+
+        case attr_type.postgres_reference_expr(attr_type, constraints, expr) do
+          {:ok, bare_expr} -> {:ok, bare_expr, acc}
+          :error -> :error
+        end
+      else
+        :error
       end
     else
       :error
@@ -219,21 +228,29 @@ defmodule AshPostgres.SqlImplementation do
         acc,
         type
       ) do
-    if function_exported?(attr_type, :postgres_reference_expr, 3) do
-      # Mark as processed to prevent re-matching this clause
-      processed_ref = %{ref | bare?: :__postgres_reference_expr_processed__}
+    # Only process if attr_type is an atom (not a tuple like {:array, Type})
+    if is_atom(attr_type) do
+      Code.ensure_loaded!(attr_type)
 
-      # Get the standard column reference without custom wrapping
-      case AshSql.Expr.dynamic_expr(query, processed_ref, bindings, embedded?, type, acc) do
-        {:ok, expr, acc} ->
-          # Then let the type wrap it (e.g., with COLLATE)
-          case attr_type.postgres_reference_expr(attr_type, constraints, expr) do
-            {:ok, wrapped_expr} -> {:ok, wrapped_expr, acc}
-            :error -> {:ok, expr, acc}
-          end
+      if function_exported?(attr_type, :postgres_reference_expr, 3) do
+        # Mark as processed to prevent re-matching this clause
+        processed_ref = %{ref | bare?: :__postgres_reference_expr_processed__}
 
-        other ->
-          other
+        # Get the standard column reference without custom wrapping
+        # dynamic_expr returns {expr, acc}, not {:ok, expr, acc}
+        case AshSql.Expr.dynamic_expr(query, processed_ref, bindings, embedded?, type, acc) do
+          {:error, error} ->
+            {:error, error}
+
+          {expr, acc} ->
+            # Then let the type wrap it (e.g., with COLLATE)
+            case attr_type.postgres_reference_expr(attr_type, constraints, expr) do
+              {:ok, wrapped_expr} -> {:ok, wrapped_expr, acc}
+              :error -> {:ok, expr, acc}
+            end
+        end
+      else
+        :error
       end
     else
       :error
@@ -255,21 +272,29 @@ defmodule AshPostgres.SqlImplementation do
         acc,
         type
       ) do
-    if function_exported?(attr_type, :postgres_reference_expr, 3) do
-      # Mark as processed to prevent re-matching this clause
-      processed_ref = %{ref | bare?: :__postgres_reference_expr_processed__}
+    # Only process if attr_type is an atom (not a tuple like {:array, Type})
+    if is_atom(attr_type) do
+      Code.ensure_loaded!(attr_type)
 
-      # Get the standard column reference without custom wrapping
-      case AshSql.Expr.dynamic_expr(query, processed_ref, bindings, embedded?, type, acc) do
-        {:ok, expr, acc} ->
-          # Then let the type wrap it (e.g., with COLLATE)
-          case attr_type.postgres_reference_expr(attr_type, constraints, expr) do
-            {:ok, wrapped_expr} -> {:ok, wrapped_expr, acc}
-            :error -> {:ok, expr, acc}
-          end
+      if function_exported?(attr_type, :postgres_reference_expr, 3) do
+        # Mark as processed to prevent re-matching this clause
+        processed_ref = %{ref | bare?: :__postgres_reference_expr_processed__}
 
-        other ->
-          other
+        # Get the standard column reference without custom wrapping
+        # dynamic_expr returns {expr, acc}, not {:ok, expr, acc}
+        case AshSql.Expr.dynamic_expr(query, processed_ref, bindings, embedded?, type, acc) do
+          {:error, error} ->
+            {:error, error}
+
+          {expr, acc} ->
+            # Then let the type wrap it (e.g., with COLLATE)
+            case attr_type.postgres_reference_expr(attr_type, constraints, expr) do
+              {:ok, wrapped_expr} -> {:ok, wrapped_expr, acc}
+              :error -> {:ok, expr, acc}
+            end
+        end
+      else
+        :error
       end
     else
       :error

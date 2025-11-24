@@ -21,21 +21,25 @@ defmodule AshPostgres.Test.CollatedPost do
     attribute :title, AshPostgres.CollatedString do
       constraints(collation: "C")
       allow_nil?(false)
+      public?(true)
     end
 
     attribute :content, AshPostgres.CollatedString do
       constraints(collation: "en_US.utf8")
       allow_nil?(true)
+      public?(true)
     end
 
     attribute :tags, AshPostgres.CollatedString do
       constraints(collation: "POSIX")
       allow_nil?(true)
+      public?(true)
     end
 
     # Standard string field for comparison
     attribute :author, :string do
       allow_nil?(true)
+      public?(true)
     end
 
     create_timestamp(:inserted_at)
