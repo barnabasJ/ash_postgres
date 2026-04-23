@@ -2617,7 +2617,9 @@ defmodule AshPostgres.MigrationGenerator do
             repo: snapshot.repo,
             multitenancy: snapshot.multitenancy,
             old_multitenancy: empty_snapshot.multitenancy,
-            create_table_options: snapshot.create_table_options
+            create_table_options: snapshot.create_table_options,
+            base_filter: Map.get(snapshot, :base_filter),
+            has_create_action: Map.get(snapshot, :has_create_action, true)
           }
           | acc
         ],
