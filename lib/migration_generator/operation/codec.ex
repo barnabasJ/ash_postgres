@@ -821,11 +821,7 @@ defmodule AshPostgres.MigrationGenerator.Operation.Codec do
 
   @doc false
   def encode_custom_index(index) do
-    fields =
-      Enum.map(index.fields, fn
-        field when is_atom(field) -> %{type: "atom", value: field}
-        field when is_binary(field) -> %{type: "string", value: field}
-      end)
+    fields = Enum.map(index.fields, &AshPostgres.CustomIndex.field_to_snapshot/1)
 
     %{index | fields: fields}
     |> Map.delete(:__spark_metadata__)
@@ -836,9 +832,17 @@ defmodule AshPostgres.MigrationGenerator.Operation.Codec do
     custom_index
     |> Map.update(:fields, [], fn fields ->
       Enum.map(fields, fn
-        %{type: "atom", value: field} -> maybe_to_atom(field)
-        %{type: "string", value: field} -> field
-        field -> field
+        %{type: "atom", value: field} ->
+          maybe_to_atom(field)
+
+        %{type: "string", value: field} ->
+          field
+
+        %{type: "directed", order: order, value: value} ->
+          {maybe_to_atom(order), maybe_to_atom(value)}
+
+        field ->
+          field
       end)
     end)
     |> Map.put_new(:include, [])
