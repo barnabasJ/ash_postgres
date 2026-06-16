@@ -48,6 +48,15 @@ defmodule Mix.Tasks.AshPostgres.MigrateSnapshots do
 
   @impl true
   def run(args) do
+    # Full-state snapshots are decoded with `keys: :atoms!`, so every structural
+    # key must already be an interned atom. Unlike `ash_postgres.generate_migrations`,
+    # this task never loads resources, so a module that contributes snapshot-only
+    # keys but isn't otherwise referenced on the decode path — notably
+    # `AshPostgres.CustomIndex`, whose `:using` field appears for e.g. GIN indexes —
+    # may be unloaded, leaving its atoms uninterned and crashing the decode. Force
+    # those modules to load before reading any snapshot.
+    Code.ensure_loaded(AshPostgres.CustomIndex)
+
     {opts, _} = OptionParser.parse!(args, strict: @switches)
 
     opts =

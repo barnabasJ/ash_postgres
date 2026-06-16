@@ -40,6 +40,46 @@ defmodule Mix.Tasks.AshPostgres.MigrateSnapshotsTest do
     }
   end
 
+  defp legacy_snapshot_json_with_custom_index(table, attributes, custom_index) do
+    Jason.encode!(%{
+      attributes: attributes,
+      base_filter: nil,
+      check_constraints: [],
+      custom_indexes: [custom_index],
+      custom_statements: [],
+      has_create_action: true,
+      hash: "ABCDEF",
+      identities: [],
+      multitenancy: %{attribute: nil, global: nil, strategy: nil},
+      repo: "Elixir.AshPostgres.TestRepo",
+      schema: nil,
+      table: table
+    })
+  end
+
+  # A custom index carrying a `using` method (e.g. a GIN index). The `using` key
+  # only appears in snapshots that define such an index, so decoding it with
+  # `keys: :atoms!` requires `:using` to be an already-interned atom — which it
+  # is not unless `AshPostgres.CustomIndex` has been loaded. The migrate task
+  # must ensure that module is loaded before reading snapshots.
+  defp legacy_gin_custom_index do
+    %{
+      "all_tenants?" => true,
+      "concurrently" => false,
+      "error_fields" => ["tags"],
+      "fields" => [%{"type" => "atom", "value" => "tags"}],
+      "include" => nil,
+      "message" => nil,
+      "name" => nil,
+      "nulls_distinct" => true,
+      "prefix" => nil,
+      "table" => nil,
+      "unique" => false,
+      "using" => "GIN",
+      "where" => nil
+    }
+  end
+
   test "converts a directory of legacy snapshots into a single v2 delta", %{tmp_dir: tmp_dir} do
     resource_dir = Path.join([tmp_dir, "test_repo", "authors"])
     File.mkdir_p!(resource_dir)
@@ -79,6 +119,43 @@ defmodule Mix.Tasks.AshPostgres.MigrateSnapshotsTest do
 
     assert :id in sources
     assert :email in sources
+  end
+
+  test "converts a legacy snapshot whose custom index carries a `using` method",
+       %{tmp_dir: tmp_dir} do
+    resource_dir = Path.join([tmp_dir, "test_repo", "memory_entries"])
+    File.mkdir_p!(resource_dir)
+
+    latest = Path.join(resource_dir, "20260101000000.json")
+
+    File.write!(
+      latest,
+      legacy_snapshot_json_with_custom_index(
+        "memory_entries",
+        [legacy_attribute(:id, :uuid), legacy_attribute(:tags, :text)],
+        legacy_gin_custom_index()
+      )
+    )
+
+    # Must not raise on the `"using"` key when decoding the legacy full state.
+    Mix.Tasks.AshPostgres.MigrateSnapshots.run([
+      "--snapshot-path",
+      tmp_dir,
+      "--quiet"
+    ])
+
+    assert Codec.delta?(File.read!(latest))
+
+    # The GIN custom index survives the legacy -> delta conversion.
+    decoded = latest |> File.read!() |> Codec.decode_delta()
+
+    assert [%AshPostgres.MigrationGenerator.Operation.AddCustomIndex{index: index}] =
+             Enum.filter(
+               decoded.operations,
+               &match?(%AshPostgres.MigrationGenerator.Operation.AddCustomIndex{}, &1)
+             )
+
+    assert index.using == "GIN"
   end
 
   test "is a no-op for directories already containing v2 deltas", %{tmp_dir: tmp_dir} do
