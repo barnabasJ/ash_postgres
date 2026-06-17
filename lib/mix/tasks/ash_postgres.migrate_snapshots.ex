@@ -127,12 +127,22 @@ defmodule Mix.Tasks.AshPostgres.MigrateSnapshots do
   end
 
   defp migrate_directory(all_files, legacy_files, base, backup_stamp, opts) do
-    latest_path = List.last(all_files)
+    # The latest legacy full-state file is the authoritative complete state for
+    # the resource: it carries every facet (attributes, identities, indexes, and
+    # crucially `custom_statements`). A directory may ALSO contain a pre-existing
+    # v2 delta that is *incomplete* — e.g. a baseline generated before a
+    # resource's custom_statements were captured — which is exactly why the
+    # legacy file was left behind. Convert the legacy full-state and back up
+    # EVERY other file (stale legacy files AND any partial delta). Backing up
+    # only the legacy files (the previous behavior) left the incomplete delta in
+    # place, so `Reducer.load_reduced_state/2` replayed two from-empty deltas and
+    # raised a `ConflictError` (e.g. "attribute :id already exists").
+    source_path = List.last(legacy_files)
 
     if opts.dry_run do
-      print(opts, "DRY   would convert #{latest_path} into a v2 delta at #{latest_path}")
+      print(opts, "DRY   would convert #{source_path} into a single v2 baseline delta")
     else
-      full_state = latest_path |> File.read!() |> Codec.decode_full_state()
+      full_state = source_path |> File.read!() |> Codec.decode_full_state()
       operations = MigrationGenerator.initial_operations_for_state(full_state)
 
       delta_json =
@@ -142,15 +152,15 @@ defmodule Mix.Tasks.AshPostgres.MigrateSnapshots do
           migration: nil
         })
 
-      File.write!(latest_path, delta_json)
+      File.write!(source_path, delta_json)
 
       if !opts.keep_legacy do
-        Enum.each(legacy_files, fn path ->
-          if path != latest_path, do: move_to_backup(path, base, backup_stamp)
+        Enum.each(all_files, fn path ->
+          if path != source_path, do: move_to_backup(path, base, backup_stamp)
         end)
       end
 
-      print(opts, "DONE  #{latest_path}")
+      print(opts, "DONE  #{source_path}")
     end
 
     :ok
