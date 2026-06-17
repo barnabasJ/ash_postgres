@@ -57,6 +57,14 @@ defmodule Mix.Tasks.AshPostgres.SquashSnapshots do
 
   @impl true
   def run(args) do
+    # Delta snapshots are decoded with `keys: :atoms!`, so every structural key
+    # must already be an interned atom. Like `ash_postgres.migrate_snapshots`,
+    # this task reduces snapshots without loading resources, so a snapshot-only
+    # key contributed by an unloaded module — notably `AshPostgres.CustomIndex`'s
+    # `:using` field (present for e.g. GIN indexes) — may be uninterned and crash
+    # `Codec.decode_delta/1`. Force that module to load before reading snapshots.
+    Code.ensure_loaded(AshPostgres.CustomIndex)
+
     {opts, []} = OptionParser.parse!(args, strict: @switches)
 
     opts =
