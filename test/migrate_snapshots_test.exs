@@ -177,6 +177,58 @@ defmodule Mix.Tasks.AshPostgres.MigrateSnapshotsTest do
     assert File.read!(v2_path) == before
   end
 
+  test "collapses a stale legacy file beside an incomplete v2 delta into one complete delta",
+       %{tmp_dir: tmp_dir} do
+    # Regression: a partially-migrated directory can hold a pre-existing v2 delta
+    # that is INCOMPLETE (e.g. an earlier baseline generated before a facet
+    # existed) next to the authoritative legacy full-state file that was left
+    # behind. The legacy full-state is authoritative; converting it and backing
+    # up EVERY other file (including the incomplete delta) must leave exactly one
+    # complete delta. The previous behavior backed up only legacy files, leaving
+    # the incomplete delta in place so `load_reduced_state/2` replayed two
+    # from-empty deltas and raised a ConflictError.
+    resource_dir = Path.join([tmp_dir, "test_repo", "mixed"])
+    File.mkdir_p!(resource_dir)
+
+    incomplete_delta = Path.join(resource_dir, "00000000000000.json")
+    File.write!(incomplete_delta, Codec.encode_delta([]))
+
+    legacy = Path.join(resource_dir, "20260101000000.json")
+
+    File.write!(
+      legacy,
+      legacy_snapshot_json("mixed", [
+        legacy_attribute(:id, :uuid),
+        legacy_attribute(:email, :text)
+      ])
+    )
+
+    Mix.Tasks.AshPostgres.MigrateSnapshots.run([
+      "--snapshot-path",
+      tmp_dir,
+      "--quiet"
+    ])
+
+    # Exactly one delta remains; the incomplete baseline was moved to backup.
+    assert [delta_path] = Path.wildcard(Path.join(resource_dir, "*.json"))
+    assert Codec.delta?(File.read!(delta_path))
+
+    backup_files = Path.wildcard(Path.join([tmp_dir, ".legacy_backup", "**/*.json"]))
+    assert Enum.any?(backup_files, &String.ends_with?(&1, "00000000000000.json"))
+
+    # The surviving delta carries the legacy's full state (it is complete).
+    sources =
+      delta_path
+      |> File.read!()
+      |> Codec.decode_delta()
+      |> Map.fetch!(:operations)
+      |> Enum.filter(&match?(%AshPostgres.MigrationGenerator.Operation.AddAttribute{}, &1))
+      |> Enum.map(& &1.attribute.source)
+
+    assert :id in sources
+    assert :email in sources
+  end
+
   test "--dry-run does not modify files", %{tmp_dir: tmp_dir} do
     resource_dir = Path.join([tmp_dir, "test_repo", "dryrun"])
     File.mkdir_p!(resource_dir)
