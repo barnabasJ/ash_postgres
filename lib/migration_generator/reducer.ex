@@ -227,11 +227,29 @@ defmodule AshPostgres.MigrationGenerator.Reducer do
         "RemoveAttribute: attribute #{inspect(attr.source)} not present"
       end)
 
-  def apply_op(state, %Operation.AlterAttribute{old_attribute: old_attr, new_attribute: new_attr}),
-    do:
-      replace_in_coll(state, :attributes, &(&1.source == old_attr.source), new_attr, fn ->
-        "AlterAttribute: attribute #{inspect(old_attr.source)} not present"
-      end)
+  def apply_op(state, %Operation.AlterAttribute{old_attribute: old_attr, new_attribute: new_attr}) do
+    # An AlterAttribute is applied here as a FULL replace. When the foreign key
+    # is UNCHANGED the generator strips `:references` from BOTH old and new
+    # (they serialize as `nil`), so `old == new`; when the FK actually changes
+    # it carries the real (differing) references. Using the new attribute
+    # verbatim in the unchanged case would drop the column's existing FK from
+    # the reduced state — making `ash.codegen` perpetually re-emit drop/add-FK
+    # ops. So when this op does not change references, carry the existing FK
+    # forward; otherwise honor the new references (including removal to `nil`).
+    new_attr =
+      if Map.get(old_attr, :references) == Map.get(new_attr, :references) do
+        case Enum.find(Map.fetch!(state, :attributes), &(&1.source == old_attr.source)) do
+          nil -> new_attr
+          existing -> Map.put(new_attr, :references, Map.get(existing, :references))
+        end
+      else
+        new_attr
+      end
+
+    replace_in_coll(state, :attributes, &(&1.source == old_attr.source), new_attr, fn ->
+      "AlterAttribute: attribute #{inspect(old_attr.source)} not present"
+    end)
+  end
 
   def apply_op(state, %Operation.RenameAttribute{
         old_attribute: old_attr,
