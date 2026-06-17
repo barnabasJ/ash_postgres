@@ -361,6 +361,116 @@ defmodule AshPostgres.SnapshotDeltaTest do
       assert {:threw, "RemoveAttribute: attribute :email not present"} = caught
     end
 
+    test "AlterAttribute with unchanged references preserves the existing foreign key",
+         %{snapshot: snapshot} do
+      # Regression: the generator strips `:references` from BOTH old and new
+      # when the FK is unchanged (so old == new == nil). Applying the op as a
+      # naive full replace would drop the column's FK from the reduced state,
+      # making `ash.codegen` perpetually re-emit drop/add-FK ops. The reducer
+      # must carry the existing reference forward in that case.
+      fk_attr = %{
+        @text_attribute
+        | source: :org_id,
+          references: %{
+            destination_attribute: :id,
+            destination_field: nil,
+            multitenancy: nil,
+            name: "fk_org",
+            on_delete: nil,
+            on_update: nil,
+            deferrable: false,
+            match_with: nil,
+            match_type: nil,
+            primary_key?: false,
+            schema: nil,
+            table: "organizations"
+          }
+      }
+
+      state =
+        snapshot
+        |> Reducer.empty_state()
+        |> Reducer.apply_op(%Operation.CreateTable{
+          table: snapshot.table,
+          schema: nil,
+          multitenancy: @base_multitenancy,
+          old_multitenancy: @base_multitenancy,
+          repo: snapshot.repo
+        })
+        |> Reducer.apply_op(%Operation.AddAttribute{
+          table: snapshot.table,
+          schema: nil,
+          attribute: fk_attr
+        })
+
+      # An allow_nil?-only change; references stripped to nil on both sides
+      # (old == new), exactly as the generator emits when the FK is unchanged.
+      state =
+        Reducer.apply_op(state, %Operation.AlterAttribute{
+          table: snapshot.table,
+          schema: nil,
+          old_attribute: %{fk_attr | references: nil, allow_nil?: true},
+          new_attribute: %{fk_attr | references: nil, allow_nil?: false}
+        })
+
+      org = Enum.find(state.attributes, &(&1.source == :org_id))
+      # the actual change applied...
+      assert org.allow_nil? == false
+      # ...and the foreign key was preserved, not dropped.
+      refute is_nil(org.references)
+      assert org.references.table == "organizations"
+    end
+
+    test "AlterAttribute that changes references honors the new reference",
+         %{snapshot: snapshot} do
+      fk_attr = %{
+        @text_attribute
+        | source: :org_id,
+          references: %{
+            destination_attribute: :id,
+            destination_field: nil,
+            multitenancy: nil,
+            name: "fk_org",
+            on_delete: nil,
+            on_update: nil,
+            deferrable: false,
+            match_with: nil,
+            match_type: nil,
+            primary_key?: false,
+            schema: nil,
+            table: "organizations"
+          }
+      }
+
+      state =
+        snapshot
+        |> Reducer.empty_state()
+        |> Reducer.apply_op(%Operation.CreateTable{
+          table: snapshot.table,
+          schema: nil,
+          multitenancy: @base_multitenancy,
+          old_multitenancy: @base_multitenancy,
+          repo: snapshot.repo
+        })
+        |> Reducer.apply_op(%Operation.AddAttribute{
+          table: snapshot.table,
+          schema: nil,
+          attribute: fk_attr
+        })
+
+      # Genuine FK removal: old has the reference, new sets it to nil → differ.
+      state =
+        Reducer.apply_op(state, %Operation.AlterAttribute{
+          table: snapshot.table,
+          schema: nil,
+          old_attribute: fk_attr,
+          new_attribute: %{fk_attr | references: nil}
+        })
+
+      org = Enum.find(state.attributes, &(&1.source == :org_id))
+      assert is_nil(org.references)
+    end
+
     test "RenameAttribute: missing source is reported BEFORE existing destination",
          %{snapshot: snapshot} do
       # Regression test for post-refactor check ordering. Before the helper
