@@ -456,7 +456,7 @@ defmodule AshPostgres.DeltaModeIntegrationTest do
       renames = Enum.filter(all_ops, &match?(%Operation.RenameTable{}, &1))
 
       assert Enum.any?(renames, fn op ->
-               op.old_table == "delta_posts_g_old" and op.new_table == "delta_posts_g_new"
+               op.old_table == "delta_posts_g_old" and op.table == "delta_posts_g_new"
              end)
     end
 
