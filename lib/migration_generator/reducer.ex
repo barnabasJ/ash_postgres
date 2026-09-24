@@ -212,7 +212,7 @@ defmodule AshPostgres.MigrationGenerator.Reducer do
       )
     end
 
-    %{state | table: op.new_table}
+    %{state | table: op.table}
   end
 
   def apply_op(state, %Operation.AddAttribute{attribute: attr}),
