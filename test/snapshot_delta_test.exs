@@ -1277,7 +1277,7 @@ defmodule AshPostgres.SnapshotDeltaTest do
         |> Reducer.apply_op(create.())
         |> Reducer.apply_op(%Operation.RenameTable{
           old_table: "things",
-          new_table: "things_v2",
+          table: "things_v2",
           schema: nil,
           multitenancy: @base_multitenancy,
           repo: AshPostgres.TestRepo
@@ -1289,7 +1289,7 @@ defmodule AshPostgres.SnapshotDeltaTest do
                throw_reason(fn ->
                  Reducer.apply_op(state, %Operation.RenameTable{
                    old_table: "wrong",
-                   new_table: "another",
+                   table: "another",
                    schema: nil,
                    multitenancy: @base_multitenancy,
                    repo: AshPostgres.TestRepo
