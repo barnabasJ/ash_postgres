@@ -1633,7 +1633,7 @@ defmodule AshPostgres.MigrationGenerator do
 
   defp attach_rename_ops_to_snapshots(snapshots_with_operations, rename_ops, deduped_with_renames) do
     Enum.reduce(rename_ops, snapshots_with_operations, fn
-      %Operation.RenameTable{new_table: table, schema: schema} = rename_op, acc ->
+      %Operation.RenameTable{table: table, schema: schema} = rename_op, acc ->
         case Enum.find_index(acc, fn {%{table: t, schema: s}, _} ->
                t == table and s == schema
              end) do

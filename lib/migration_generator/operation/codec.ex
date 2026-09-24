@@ -13,6 +13,8 @@ defmodule AshPostgres.MigrationGenerator.Operation.Codec do
     Operation.CreateTable => "create_table",
     Operation.DropTable => "drop_table",
     Operation.RenameTable => "rename_table",
+    Operation.MoveTableSchema => "move_table_schema",
+    Operation.SerialSequenceTransition => "serial_sequence_transition",
     Operation.AddAttribute => "add_attribute",
     Operation.AlterAttribute => "alter_attribute",
     Operation.RenameAttribute => "rename_attribute",
@@ -234,10 +236,29 @@ defmodule AshPostgres.MigrationGenerator.Operation.Codec do
     %{
       "type" => "rename_table",
       "old_table" => op.old_table,
-      "new_table" => op.new_table,
+      "table" => op.table,
       "schema" => op.schema,
       "multitenancy" => encode_multitenancy(op.multitenancy),
       "repo" => op.repo
+    }
+  end
+
+  def encode_op(%Operation.MoveTableSchema{} = op) do
+    base_op_json("move_table_schema", op.table, op.schema, op.multitenancy, %{
+      "old_schema" => op.old_schema,
+      "new_schema" => op.new_schema,
+      "repo" => op.repo
+    })
+  end
+
+  def encode_op(%Operation.SerialSequenceTransition{} = op) do
+    %{
+      "type" => "serial_sequence_transition",
+      "table" => op.table,
+      "schema" => op.schema,
+      "column" => op.column,
+      "transition" => to_string(op.transition),
+      "statement" => op.statement
     }
   end
 
@@ -330,14 +351,16 @@ defmodule AshPostgres.MigrationGenerator.Operation.Codec do
 
   def encode_op(%Operation.AddReferenceIndex{} = op) do
     base_op_json("add_reference_index", op.table, op.schema, op.multitenancy, %{
-      "source" => op.source
+      "source" => op.source,
+      "where" => op.where
     })
   end
 
   def encode_op(%Operation.RemoveReferenceIndex{} = op) do
     base_op_json("remove_reference_index", op.table, op.schema, op.multitenancy, %{
       "old_multitenancy" => encode_multitenancy(op.old_multitenancy),
-      "source" => op.source
+      "source" => op.source,
+      "where" => op.where
     })
   end
 
@@ -456,10 +479,31 @@ defmodule AshPostgres.MigrationGenerator.Operation.Codec do
   defp decode_op(Operation.RenameTable, m) do
     %Operation.RenameTable{
       old_table: m.old_table,
-      new_table: m.new_table,
+      table: m.table,
       schema: m.schema,
       multitenancy: decode_multitenancy(m.multitenancy),
       repo: decode_atom(m.repo)
+    }
+  end
+
+  defp decode_op(Operation.MoveTableSchema, m) do
+    %Operation.MoveTableSchema{
+      table: m.table,
+      schema: m.schema,
+      old_schema: Map.get(m, :old_schema),
+      new_schema: Map.get(m, :new_schema),
+      multitenancy: decode_multitenancy(m.multitenancy),
+      repo: decode_atom(m.repo)
+    }
+  end
+
+  defp decode_op(Operation.SerialSequenceTransition, m) do
+    %Operation.SerialSequenceTransition{
+      table: m.table,
+      schema: m.schema,
+      column: decode_atom(Map.get(m, :column)),
+      transition: decode_atom(Map.get(m, :transition)),
+      statement: Map.get(m, :statement)
     }
   end
 
@@ -584,7 +628,8 @@ defmodule AshPostgres.MigrationGenerator.Operation.Codec do
       table: m.table,
       schema: m.schema,
       multitenancy: decode_multitenancy(m.multitenancy),
-      source: decode_atom(m.source)
+      source: decode_atom(m.source),
+      where: Map.get(m, :where)
     }
   end
 
@@ -594,7 +639,8 @@ defmodule AshPostgres.MigrationGenerator.Operation.Codec do
       schema: m.schema,
       multitenancy: decode_multitenancy(m.multitenancy),
       old_multitenancy: decode_multitenancy(Map.get(m, :old_multitenancy)),
-      source: decode_atom(m.source)
+      source: decode_atom(m.source),
+      where: Map.get(m, :where)
     }
   end
 
