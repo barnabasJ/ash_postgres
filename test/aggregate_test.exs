@@ -2641,4 +2641,77 @@ defmodule AshSql.AggregateTest do
                loaded_post.max_rating_with_join_filter == 10
     end
   end
+
+  describe "inline aggregates whose field is a calculation" do
+    setup do
+      author =
+        Author
+        |> Ash.Changeset.for_create(:create, %{first_name: "author"})
+        |> Ash.create!()
+
+      post =
+        Post
+        |> Ash.Changeset.for_create(:create, %{title: "post"})
+        |> Ash.Changeset.manage_relationship(:author, author, type: :append_and_remove)
+        |> Ash.create!()
+
+      for title <- ["unrated", "rated"] do
+        Comment
+        |> Ash.Changeset.for_create(:create, %{title: title})
+        |> Ash.Changeset.manage_relationship(:post, post, type: :append_and_remove)
+        |> Ash.create!()
+      end
+
+      rated = Comment |> Ash.Query.filter(title == "rated") |> Ash.read_one!()
+
+      Rating
+      |> Ash.Changeset.for_create(:create, %{score: 10, resource_id: rated.id})
+      |> Ash.Changeset.set_context(%{data_layer: %{table: "comment_ratings"}})
+      |> Ash.create!()
+
+      %{author: author, post: post, rated: rated}
+    end
+
+    test "resolve over a one-hop path", %{post: post, rated: rated} do
+      assert %{calculations: %{rated?: true}} =
+               Post
+               |> Ash.Query.filter(id == ^post.id)
+               |> Ash.Query.calculate(
+                 :rated?,
+                 :boolean,
+                 expr(first(comments, field: :has_rating, query: [filter: id == ^rated.id]))
+               )
+               |> Ash.read_one!()
+    end
+
+    test "resolve over a nested path", %{author: author, rated: rated} do
+      assert %{calculations: %{rated?: true}} =
+               Author
+               |> Ash.Query.filter(id == ^author.id)
+               |> Ash.Query.calculate(
+                 :rated?,
+                 :boolean,
+                 expr(first(posts.comments, field: :has_rating, query: [filter: id == ^rated.id]))
+               )
+               |> Ash.read_one!()
+    end
+
+    test "resolve over a nested path when the calculation walks its own relationship",
+         %{author: author, rated: rated} do
+      assert %{calculations: %{sibling_count: 2}} =
+               Author
+               |> Ash.Query.filter(id == ^author.id)
+               |> Ash.Query.calculate(
+                 :sibling_count,
+                 :integer,
+                 expr(
+                   first(posts.comments,
+                     field: :post_count_of_comments,
+                     query: [filter: id == ^rated.id]
+                   )
+                 )
+               )
+               |> Ash.read_one!()
+    end
+  end
 end
