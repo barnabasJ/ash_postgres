@@ -365,6 +365,14 @@ defmodule AshPostgres.DataLayer do
         A list of `:first` type aggregate names that can be joined to using a simple join.  Use when you have a `:first` aggregate that uses a to-many relationship , but your `filter` statement ensures that there is only one result. Optimizes the generated query.
         """
       ],
+      distribution_key: [
+        type: :atom,
+        doc: """
+        The attribute that a distributed PostgreSQL extension such as Citus distributes this resource's table by.
+
+        Every join between two resources that both declare one gets `source.key = destination.key` added to its join condition, which such extensions require to join two distributed tables. This covers filtering, sorting and aggregating through relationships, `exists`, and relationship loads, so the relationship itself does not need a `parent(key) == key` filter. `many_to_many` relationships get it on both the source/through and the through/destination joins. Relationships with `no_attributes?: true` and manual relationships define their own join conditions and are left alone.
+        """
+      ],
       skip_unique_indexes: [
         type: {:wrap_list, :atom},
         default: [],
@@ -465,6 +473,7 @@ defmodule AshPostgres.DataLayer do
       AshPostgres.Verifiers.PreventAttributeMultitenancyAndNonFullMatchType,
       AshPostgres.Verifiers.EnsureTableOrPolymorphic,
       AshPostgres.Verifiers.ValidateIdentityIndexNames,
+      AshPostgres.Verifiers.ValidateDistributionKey,
       AshPostgres.Verifiers.VerifyTemporal
     ]
 
@@ -1303,11 +1312,19 @@ defmodule AshPostgres.DataLayer do
           base_query
 
         true ->
-          from(destination in base_query,
-            where:
+          condition =
+            Ecto.Query.dynamic(
+              [destination],
               field(destination, ^destination_attribute) ==
                 field(parent_as(^0), ^source_attribute)
-          )
+            )
+            |> AshSql.DistributionKey.join_on(
+              AshPostgres.SqlImplementation,
+              {relationship.source, {:parent_as, 0}},
+              {relationship.destination, :first}
+            )
+
+          from(destination in base_query, where: ^condition)
       end
 
     subquery =
@@ -1416,6 +1433,48 @@ defmodule AshPostgres.DataLayer do
              through_relationship}
           ] ->
             through_binding = Map.get(query, :__ash_bindings__)[:current]
+            through_module = through_relationship.destination
+
+            # `through.destination_attribute_on_join_resource == destination.destination_attribute`,
+            # for joining the through query onto the destination query
+            through_destination_on =
+              Ecto.Query.dynamic(
+                [destination, ..., through],
+                field(through, ^destination_attribute_on_join_resource) ==
+                  field(destination, ^destination_attribute)
+              )
+              |> AshSql.DistributionKey.join_on(
+                AshPostgres.SqlImplementation,
+                {through_module, :last},
+                {relationship.destination, :first}
+              )
+
+            # `through.source_attribute_on_join_resource == source.source_attribute`, correlating
+            # the through rows with the lateral join's source row. Two variants: one for when the
+            # through query is wrapped in its own subquery (the through table is the `from`), one
+            # for when it is joined directly (the through table is the `through_binding` join).
+            through_source_where =
+              Ecto.Query.dynamic(
+                [through],
+                field(through, ^source_attribute_on_join_resource) ==
+                  field(parent_as(^0), ^source_attribute)
+              )
+              |> AshSql.DistributionKey.join_on(
+                AshPostgres.SqlImplementation,
+                {relationship.source, {:parent_as, 0}},
+                {through_module, :first}
+              )
+
+            through_source_join_where =
+              Ecto.Query.dynamic(
+                field(as(^through_binding), ^source_attribute_on_join_resource) ==
+                  field(parent_as(^0), ^source_attribute)
+              )
+              |> AshSql.DistributionKey.join_on(
+                AshPostgres.SqlImplementation,
+                {relationship.source, {:parent_as, 0}},
+                {through_module, {:as, through_binding}}
+              )
 
             through_resource
             |> Ash.Query.new()
@@ -1486,12 +1545,7 @@ defmodule AshPostgres.DataLayer do
 
                 through_query =
                   if needs_subquery? do
-                    through_query =
-                      from(through in through_query,
-                        where:
-                          field(through, ^source_attribute_on_join_resource) ==
-                            field(parent_as(^0), ^source_attribute)
-                      )
+                    through_query = from(through in through_query, where: ^through_source_where)
 
                     subquery(
                       set_subquery_prefix(
@@ -1513,9 +1567,7 @@ defmodule AshPostgres.DataLayer do
                           select_merge: %{__order__: over(row_number(), :order)},
                           join: through in ^through_query,
                           as: ^through_binding,
-                          on:
-                            field(through, ^destination_attribute_on_join_resource) ==
-                              field(destination, ^destination_attribute)
+                          on: ^through_destination_on
                         )
                         |> set_subquery_prefix(
                           source_query,
@@ -1529,15 +1581,8 @@ defmodule AshPostgres.DataLayer do
                           select_merge: %{__order__: over(row_number(), :order)},
                           join: through in ^through_query,
                           as: ^through_binding,
-                          on:
-                            field(through, ^destination_attribute_on_join_resource) ==
-                              field(destination, ^destination_attribute),
-                          where:
-                            field(through, ^source_attribute_on_join_resource) ==
-                              field(
-                                parent_as(^0),
-                                ^source_attribute
-                              )
+                          on: ^through_destination_on,
+                          where: ^through_source_join_where
                         )
                         |> set_subquery_prefix(
                           source_query,
@@ -1564,9 +1609,7 @@ defmodule AshPostgres.DataLayer do
                           destination in query,
                           join: through in ^through_query,
                           as: ^through_binding,
-                          on:
-                            field(through, ^destination_attribute_on_join_resource) ==
-                              field(destination, ^destination_attribute)
+                          on: ^through_destination_on
                         )
                         |> set_subquery_prefix(
                           source_query,
@@ -1579,15 +1622,8 @@ defmodule AshPostgres.DataLayer do
                           destination in query,
                           join: through in ^through_query,
                           as: ^through_binding,
-                          on:
-                            field(through, ^destination_attribute_on_join_resource) ==
-                              field(destination, ^destination_attribute),
-                          where:
-                            field(through, ^source_attribute_on_join_resource) ==
-                              field(
-                                parent_as(^0),
-                                ^source_attribute
-                              )
+                          on: ^through_destination_on,
+                          where: ^through_source_join_where
                         )
                         |> set_subquery_prefix(
                           source_query,
@@ -1632,21 +1668,28 @@ defmodule AshPostgres.DataLayer do
                   |> Enum.zip(through_queries)
                   |> Enum.reverse()
                   |> Enum.reduce(
-                    {base_subquery, 0},
+                    {base_subquery, 0, relationship.destination},
                     fn {{_through_res, src_attr, dst_attr, _through_rel},
                         {through_ecto_q, through_module}},
-                       {sub_q, offset} ->
+                       {sub_q, offset, prev_module} ->
                       binding = Map.get(query, :__ash_bindings__)[:current] + offset
                       is_outermost? = offset == length(rest) - 1
 
                       prepared_through =
                         if is_outermost? do
-                          correlated =
-                            from(through in through_ecto_q,
-                              where:
-                                field(through, ^source_attribute_on_join_resource) ==
-                                  field(parent_as(^0), ^source_attribute)
+                          condition =
+                            Ecto.Query.dynamic(
+                              [through],
+                              field(through, ^source_attribute_on_join_resource) ==
+                                field(parent_as(^0), ^source_attribute)
                             )
+                            |> AshSql.DistributionKey.join_on(
+                              AshPostgres.SqlImplementation,
+                              {relationship.source, {:parent_as, 0}},
+                              {through_module, :first}
+                            )
+
+                          correlated = from(through in through_ecto_q, where: ^condition)
 
                           subquery(set_subquery_prefix(correlated, source_query, through_module))
                         else
@@ -1657,26 +1700,44 @@ defmodule AshPostgres.DataLayer do
 
                       new_sub_q =
                         if offset == 0 do
+                          on =
+                            Ecto.Query.dynamic(
+                              [dest, ..., through],
+                              field(through, ^src_attr) == field(dest, ^dst_attr)
+                            )
+                            |> AshSql.DistributionKey.join_on(
+                              AshPostgres.SqlImplementation,
+                              {through_module, :last},
+                              {prev_module, :first}
+                            )
+
                           from(dest in sub_q,
                             join: through in ^prepared_through,
                             as: ^binding,
-                            on:
-                              field(through, ^src_attr) ==
-                                field(dest, ^dst_attr)
+                            on: ^on
                           )
                         else
                           prev_binding = binding - 1
 
+                          on =
+                            Ecto.Query.dynamic(
+                              [..., through],
+                              field(through, ^src_attr) == field(as(^prev_binding), ^dst_attr)
+                            )
+                            |> AshSql.DistributionKey.join_on(
+                              AshPostgres.SqlImplementation,
+                              {through_module, :last},
+                              {prev_module, {:as, prev_binding}}
+                            )
+
                           from(dest in sub_q,
                             join: through in ^prepared_through,
                             as: ^binding,
-                            on:
-                              field(through, ^src_attr) ==
-                                field(as(^prev_binding), ^dst_attr)
+                            on: ^on
                           )
                         end
 
-                      {new_sub_q, offset + 1}
+                      {new_sub_q, offset + 1, through_module}
                     end
                   )
                   |> elem(0)

@@ -424,6 +424,11 @@ defmodule AshPostgres.SqlImplementation do
   end
 
   @impl true
+  def distribution_key(resource) do
+    AshPostgres.DataLayer.Info.distribution_key(resource)
+  end
+
+  @impl true
   def simple_join_first_aggregates(resource) do
     AshPostgres.DataLayer.Info.simple_join_first_aggregates(resource)
   end
