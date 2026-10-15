@@ -14,6 +14,12 @@ defmodule AshPostgres.Test.Domain do
 
     resource(AshPostgres.Test.CoAuthorPost)
 
+    resource(AshPostgres.Test.Distributed.Project)
+    resource(AshPostgres.Test.Distributed.Task)
+    resource(AshPostgres.Test.Distributed.Comment)
+    resource(AshPostgres.Test.Distributed.Tag)
+    resource(AshPostgres.Test.Distributed.ProjectTag)
+
     resource(AshPostgres.Test.Post) do
       define(:review, action: :review)
     end

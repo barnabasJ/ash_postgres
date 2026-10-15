@@ -26,6 +26,9 @@ pg_version =
 exclude_tags =
   for n <- [14, 15, 16, 17, 18, 19], n > pg_version, do: :"postgres_#{n}"
 
+# `@tag :citus` marks a test that needs a Citus server (see `test/citus_test.exs`).
+exclude_tags = [:citus | exclude_tags]
+
 ExUnit.configure(stacktrace_depth: 100, exclude: exclude_tags)
 
 AshPostgres.TestRepo.start_link()
