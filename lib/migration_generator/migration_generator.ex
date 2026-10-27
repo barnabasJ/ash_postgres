@@ -2164,12 +2164,26 @@ defmodule AshPostgres.MigrationGenerator do
   def initial_operations_for_state(state) do
     opts = %__MODULE__{quiet: true}
 
-    state
-    |> Map.put_new(:has_create_action, true)
-    |> Map.put_new(:drop_table_opted_out, false)
-    |> Map.put_new(:base_filter, nil)
-    |> Map.put_new(:create_table_options, nil)
-    |> do_fetch_operations(nil, opts, [], MapSet.new())
+    operations =
+      state
+      |> Map.put_new(:has_create_action, true)
+      |> Map.put_new(:drop_table_opted_out, false)
+      |> Map.put_new(:base_filter, nil)
+      |> Map.put_new(:create_table_options, nil)
+      |> do_fetch_operations(nil, opts, [], MapSet.new())
+
+    if Map.get(state, :drop_table_opted_out, false) do
+      operations ++
+        [
+          %Operation.OptOutDropTable{
+            table: state.table,
+            schema: state.schema,
+            multitenancy: state.multitenancy
+          }
+        ]
+    else
+      operations
+    end
   end
 
   defp do_fetch_operations(

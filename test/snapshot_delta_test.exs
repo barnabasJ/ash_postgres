@@ -23,6 +23,43 @@ defmodule AshPostgres.SnapshotDeltaTest do
     references: nil
   }
 
+  test "initial operations retain explicit drop-table opt-out through the squash codec" do
+    empty =
+      Reducer.empty_state(%{table: "retained_records", schema: nil, repo: AshPostgres.TestRepo})
+
+    state =
+      Reducer.apply_op(empty, %Operation.CreateTable{
+        table: "retained_records",
+        schema: nil,
+        repo: AshPostgres.TestRepo,
+        multitenancy: empty.multitenancy,
+        old_multitenancy: empty.multitenancy
+      })
+
+    state =
+      Reducer.apply_op(state, %Operation.AddAttribute{
+        table: "retained_records",
+        schema: nil,
+        multitenancy: empty.multitenancy,
+        old_multitenancy: empty.multitenancy,
+        attribute: @base_attribute
+      })
+
+    for opted_out <- [false, true] do
+      original = Map.put(state, :drop_table_opted_out, opted_out)
+      operations = AshPostgres.MigrationGenerator.initial_operations_for_state(original)
+      opt_outs = Enum.filter(operations, &match?(%Operation.OptOutDropTable{}, &1))
+
+      if opted_out,
+        do: assert([%Operation.OptOutDropTable{}] = opt_outs),
+        else: assert(opt_outs == [])
+
+      decoded = operations |> Codec.encode_delta() |> Codec.decode_delta()
+      restored = Enum.reduce(decoded.operations, empty, &Reducer.apply_op(&2, &1))
+      assert restored == original
+    end
+  end
+
   @text_attribute %{
     source: :email,
     type: :text,
