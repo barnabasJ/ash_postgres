@@ -1539,6 +1539,7 @@ defmodule AshPostgres.MigrationGenerator.Operation do
       :destination_table,
       :destination_attribute,
       :destination_period,
+      :attribute,
       no_phase: true
     ]
 

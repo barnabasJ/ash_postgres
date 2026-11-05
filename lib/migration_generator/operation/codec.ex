@@ -400,7 +400,8 @@ defmodule AshPostgres.MigrationGenerator.Operation.Codec do
       "destination_schema" => op.destination_schema,
       "destination_table" => op.destination_table,
       "destination_attribute" => op.destination_attribute,
-      "destination_period" => op.destination_period
+      "destination_period" => op.destination_period,
+      "attribute" => if(op.attribute, do: encode_attribute(op.attribute))
     }
   end
 
@@ -686,7 +687,8 @@ defmodule AshPostgres.MigrationGenerator.Operation.Codec do
       destination_schema: Map.get(m, :destination_schema),
       destination_table: m.destination_table,
       destination_attribute: decode_atom(m.destination_attribute),
-      destination_period: m.destination_period
+      destination_period: m.destination_period,
+      attribute: if(m[:attribute], do: decode_attribute(m.attribute, m.table))
     }
   end
 

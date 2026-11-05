@@ -173,6 +173,18 @@ You can also pass `--snapshot-format delta` or `--snapshot-format full` to
 `mix ash_postgres.generate_migrations` / `mix ash.codegen` for one-off
 overrides without changing the repo config.
 
+### Temporal references and snapshot history
+
+Temporal foreign keys use separate period-aware SQL operations. Their delta
+records also retain the complete logical attribute and reference. The reader
+restores that metadata when it reconstructs the resource state. An unchanged
+resource therefore does not lose its temporal reference during reduction.
+
+When generation recognizes a table rename or schema move, it transfers the
+earlier delta files into the destination snapshot directory. The next reader
+reduces the original table and attribute operations before it applies the move.
+Keep the complete history together when moving snapshot directories manually.
+
 ### Squash behavior with deltas
 
 `mix ash_postgres.squash_snapshots` automatically detects the per-resource

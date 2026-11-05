@@ -659,14 +659,17 @@ defmodule AshPostgres.MigrationGenerator do
               create_new_snapshot(snapshots_with_operations, repo_name(repo), opts, tenant?)
             )
             |> then(fn files ->
-              # In delta mode, a rename must move the OLD table's delta files into
+              # In delta mode, a rename or schema move must move the OLD table's delta files into
               # the NEW table's directory so the reducer sees the full history
               # (initial deltas + RenameTable) when it walks the new dir next
               # codegen. After this move the old dir is empty and the
               # subsequent `remove_orphan_snapshots` simply deletes the empty
               # shell. In full-state mode there's only one snapshot file per
               # table, so the rename does not require a move.
-              move_rename_snapshots(rename_map, repo, opts)
+              snapshots_with_operations
+              |> snapshot_history_moves(rename_map)
+              |> move_rename_snapshots(repo, opts)
+
               remove_orphan_snapshots(orphan_snapshots, opts)
               files
             end)
@@ -2872,7 +2875,8 @@ defmodule AshPostgres.MigrationGenerator do
                 destination_schema: reference.schema,
                 destination_table: reference.table,
                 destination_attribute: reference.destination_attribute,
-                destination_period: destination
+                destination_period: destination,
+                attribute: attribute
               }
             ]
 
@@ -3796,6 +3800,23 @@ defmodule AshPostgres.MigrationGenerator do
     end
   end
 
+  defp snapshot_history_moves(snapshots_with_operations, rename_map) do
+    schema_moves =
+      Map.new(
+        for {snapshot, operations} <- snapshots_with_operations,
+            %Operation.MoveTableSchema{} = operation <- operations do
+          {{snapshot.table, snapshot.schema},
+           %{
+             old_table: operation.table,
+             old_schema: operation.old_schema,
+             snapshot: snapshot
+           }}
+        end
+      )
+
+    Map.merge(rename_map, schema_moves)
+  end
+
   defp resolve_renames(_table, adding, [], _opts), do: {adding, [], []}
 
   defp resolve_renames(_table, [], removing, _opts), do: {[], removing, []}
@@ -4618,5 +4639,4 @@ defmodule AshPostgres.MigrationGenerator do
   defp configured_default(resource, attribute) do
     AshPostgres.DataLayer.Info.migration_defaults(resource)[attribute]
   end
-
 end

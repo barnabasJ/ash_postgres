@@ -348,7 +348,10 @@ defmodule AshPostgres.MigrationGenerator.Reducer do
     do: %{state | drop_table_opted_out: true}
 
   # Temporal primary keys are emitted separately from their attributes.
-  def apply_op(state, %Operation.AddPrimaryKey{temporal: %{strategy: :context} = temporal, keys: keys}) do
+  def apply_op(state, %Operation.AddPrimaryKey{
+        temporal: %{strategy: :context} = temporal,
+        keys: keys
+      }) do
     attributes =
       Enum.map(state.attributes, fn attribute ->
         if attribute.source in keys, do: %{attribute | primary_key?: true}, else: attribute
@@ -359,8 +362,17 @@ defmodule AshPostgres.MigrationGenerator.Reducer do
 
   def apply_op(state, %Operation.AddPrimaryKey{}), do: state
 
+  def apply_op(_state, %Operation.AddTemporalForeignKey{attribute: nil}) do
+    throw_conflict("AddTemporalForeignKey requires the original logical attribute metadata")
+  end
+
+  def apply_op(state, %Operation.AddTemporalForeignKey{attribute: attribute}) do
+    replace_in_coll(state, :attributes, &(&1.source == attribute.source), attribute, fn ->
+      "AddTemporalForeignKey: attribute #{inspect(attribute.source)} not present"
+    end)
+  end
+
   # These renderer operations have their logical state captured by paired attributes.
-  def apply_op(state, %Operation.AddTemporalForeignKey{}), do: state
   def apply_op(state, %Operation.SerialSequenceTransition{}), do: state
   def apply_op(state, %Operation.AddPrimaryKeyDown{}), do: state
   def apply_op(state, %Operation.RemovePrimaryKey{}), do: state

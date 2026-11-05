@@ -23,6 +23,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
     references: nil
   }
 
+  @tag story: "US-APDELTA-01"
+
   test "initial operations retain explicit drop-table opt-out through the squash codec" do
     empty =
       Reducer.empty_state(%{table: "retained_records", schema: nil, repo: AshPostgres.TestRepo})
@@ -86,6 +88,7 @@ defmodule AshPostgres.SnapshotDeltaTest do
   @base_multitenancy %{strategy: nil, attribute: nil, global: nil}
 
   describe "upstream temporal operation compatibility" do
+    @tag story: "US-APDELTA-02"
     test "temporal and citext unique-index fields survive the delta round-trip" do
       operation = %Operation.AddUniqueIndex{
         table: "authors",
@@ -97,11 +100,15 @@ defmodule AshPostgres.SnapshotDeltaTest do
         citext_keys: [:email]
       }
 
-      assert %{operations: [^operation]} = operation |> List.wrap() |> Codec.encode_delta() |> Codec.decode_delta()
+      assert %{operations: [^operation]} =
+               operation |> List.wrap() |> Codec.encode_delta() |> Codec.decode_delta()
+
       assert Operation.AddUniqueIndex.up(operation) =~ "EXCLUDE USING gist"
       assert Operation.AddUniqueIndex.up(operation) =~ "lower(email::text)"
       assert Operation.AddUniqueIndex.up(operation) =~ "valid_at WITH &&"
     end
+
+    @tag story: "US-APDELTA-03"
 
     test "legacy unique-index deltas do not require the new renderer fields" do
       operation = %Operation.AddUniqueIndex{
@@ -117,13 +124,19 @@ defmodule AshPostgres.SnapshotDeltaTest do
         |> Codec.encode_delta()
         |> Jason.decode!()
         |> Map.update!("operations", fn [encoded] ->
-          [encoded |> Map.drop(["temporal", "citext_keys"]) |> Map.put("insert_after_attribute_source", "email")]
+          [
+            encoded
+            |> Map.drop(["temporal", "citext_keys"])
+            |> Map.put("insert_after_attribute_source", "email")
+          ]
         end)
         |> Jason.encode!()
 
       assert %{operations: [%Operation.AddUniqueIndex{temporal: nil, citext_keys: []}]} =
                Codec.decode_delta(json)
     end
+
+    @tag story: "US-APDELTA-04"
 
     test "temporal foreign-key operations retain their actual SQL period fields" do
       operation = %Operation.AddTemporalForeignKey{
@@ -138,23 +151,35 @@ defmodule AshPostgres.SnapshotDeltaTest do
         destination_period: "active_at"
       }
 
-      assert %{operations: [^operation]} = operation |> List.wrap() |> Codec.encode_delta() |> Codec.decode_delta()
+      assert %{operations: [^operation]} =
+               operation |> List.wrap() |> Codec.encode_delta() |> Codec.decode_delta()
+
       assert Operation.AddTemporalForeignKey.up(operation) =~ "PERIOD valid_at"
       assert Operation.AddTemporalForeignKey.up(operation) =~ "PERIOD active_at"
     end
 
+    @tag story: "US-APDELTA-05"
+
     test "initial temporal state survives codegen, the delta codec and reduction" do
-      empty = Reducer.empty_state(%{table: "temporal_records", schema: nil, repo: AshPostgres.TestRepo})
+      empty =
+        Reducer.empty_state(%{table: "temporal_records", schema: nil, repo: AshPostgres.TestRepo})
+
       period = %{@text_attribute | source: :valid_at, type: :tstzrange, allow_nil?: false}
 
-      state = %{empty |
-        temporal: %{strategy: :context, attribute: "valid_at"},
-        attributes: [@base_attribute, period],
-        empty?: false
+      state = %{
+        empty
+        | temporal: %{strategy: :context, attribute: "valid_at"},
+          attributes: [@base_attribute, period],
+          empty?: false
       }
 
       operations = AshPostgres.MigrationGenerator.initial_operations_for_state(state)
-      assert Enum.any?(operations, &match?(%Operation.AddPrimaryKey{temporal: %{strategy: :context}}, &1))
+
+      assert Enum.any?(
+               operations,
+               &match?(%Operation.AddPrimaryKey{temporal: %{strategy: :context}}, &1)
+             )
+
       decoded = operations |> Codec.encode_delta() |> Codec.decode_delta()
       assert Enum.reduce(decoded.operations, empty, &Reducer.apply_op(&2, &1)) == state
       assert state |> Codec.encode_full_state() |> Codec.decode_full_state() == state
@@ -162,6 +187,7 @@ defmodule AshPostgres.SnapshotDeltaTest do
   end
 
   describe "upstream schema and sequence operation compatibility" do
+    @tag story: "US-APDELTA-06"
     test "schema moves survive the codec and update the reduced schema" do
       state = Reducer.empty_state(%{table: "authors", schema: nil, repo: AshPostgres.TestRepo})
 
@@ -179,6 +205,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
 
       assert Reducer.apply_op(state, operation) == %{state | schema: "archive"}
     end
+
+    @tag story: "US-APDELTA-07"
 
     test "serial sequence rendering preserves the paired attribute state" do
       state = Reducer.empty_state(%{table: "authors", schema: nil, repo: AshPostgres.TestRepo})
@@ -199,6 +227,7 @@ defmodule AshPostgres.SnapshotDeltaTest do
   end
 
   describe "codec delta round-trip" do
+    @tag story: "US-APDELTA-08"
     test "simple AddAttribute round-trips" do
       op = %Operation.AddAttribute{
         table: "authors",
@@ -218,6 +247,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       assert decoded_op.attribute.source == :email
       assert decoded_op.attribute.type == :text
     end
+
+    @tag story: "US-APDELTA-09"
 
     test "CreateTable + AddAttribute round-trip" do
       ops = [
@@ -249,6 +280,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       assert add.attribute.primary_key? == true
     end
 
+    @tag story: "US-APDELTA-10"
+
     test "AddUniqueIndex with mixed atom/string keys round-trips" do
       identity =
         Map.merge(@base_identity, %{
@@ -273,6 +306,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       assert [%Operation.AddUniqueIndex{identity: id}] = decoded.operations
       assert id.keys == [:name, "custom_expr"]
     end
+
+    @tag story: "US-APDELTA-11"
 
     test "AddAttribute with references + nilify on_delete round-trips" do
       attr_with_ref = %{
@@ -314,6 +349,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       assert a.references.on_update == :update
     end
 
+    @tag story: "US-APDELTA-12"
+
     test "rejects non-v2 JSON with an informative error" do
       legacy_json = ~s({"attributes": [], "table": "foo"})
 
@@ -324,6 +361,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       refute Codec.delta?(legacy_json)
     end
 
+    @tag story: "US-APDELTA-13"
+
     test "rejects malformed JSON with a parseable error message" do
       assert_raise ArgumentError, ~r/Could not parse delta snapshot JSON/, fn ->
         Codec.decode_delta("not valid json {[")
@@ -331,6 +370,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
 
       refute Codec.delta?("not valid json {[")
     end
+
+    @tag story: "US-APDELTA-14"
 
     test "rejects JSON that isn't a top-level object" do
       assert_raise ArgumentError, ~r/Expected delta snapshot to be a JSON object/, fn ->
@@ -341,6 +382,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
         Codec.decode_delta("\"a string\"")
       end
     end
+
+    @tag story: "US-APDELTA-15"
 
     test "OptOutDropTable round-trips" do
       ops = [
@@ -358,6 +401,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
 
       assert [%Operation.OptOutDropTable{}] = decoded.operations
     end
+
+    @tag story: "US-APDELTA-16"
 
     test "CreateTable carries base_filter and has_create_action through round-trip" do
       op = %Operation.CreateTable{
@@ -384,6 +429,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
                }
              ] = decoded.operations
     end
+
+    @tag story: "US-APDELTA-17"
 
     test "CreateTable.has_create_action defaults to true when absent from a decoded op" do
       # Forward-compat: if a delta written before has_create_action was added
@@ -425,6 +472,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       %{snapshot: snapshot}
     end
 
+    @tag story: "US-APDELTA-18"
+
     test "empty state + CreateTable + AddAttribute produces populated state", %{
       snapshot: snapshot
     } do
@@ -452,6 +501,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       assert state.empty? == false
       assert [%{source: :id}] = state.attributes
     end
+
+    @tag story: "US-APDELTA-19"
 
     test "AddAttribute on existing source raises ConflictError", %{snapshot: snapshot} do
       state =
@@ -490,6 +541,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       end)
     end
 
+    @tag story: "US-APDELTA-20"
+
     test "RemoveAttribute on missing source is a conflict", %{snapshot: snapshot} do
       state = Reducer.empty_state(snapshot)
 
@@ -510,6 +563,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
 
       assert {:threw, "RemoveAttribute: attribute :email not present"} = caught
     end
+
+    @tag story: "US-APDELTA-21"
 
     test "AlterAttribute with unchanged references preserves the existing foreign key",
          %{snapshot: snapshot} do
@@ -571,6 +626,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       assert org.references.table == "organizations"
     end
 
+    @tag story: "US-APDELTA-22"
+
     test "AlterAttribute that changes references honors the new reference",
          %{snapshot: snapshot} do
       fk_attr = %{
@@ -621,6 +678,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       assert is_nil(org.references)
     end
 
+    @tag story: "US-APDELTA-23"
+
     test "RenameAttribute: missing source is reported BEFORE existing destination",
          %{snapshot: snapshot} do
       # Regression test for post-refactor check ordering. Before the helper
@@ -658,6 +717,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
 
       assert {:threw, "RenameAttribute: source :nonexistent_src not present"} = caught
     end
+
+    @tag story: "US-APDELTA-24"
 
     test "RenameAttribute: existing destination throws after source-found check",
          %{snapshot: snapshot} do
@@ -700,6 +761,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
 
       assert {:threw, "RenameAttribute: destination :other_col already exists"} = caught
     end
+
+    @tag story: "US-APDELTA-25"
 
     test "AddCustomStatement / RemoveCustomStatement round-trip through apply_op",
          %{snapshot: snapshot} do
@@ -746,6 +809,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       assert {:threw, "RemoveCustomStatement: statement :enable_trgm not present"} = caught
     end
 
+    @tag story: "US-APDELTA-26"
+
     test "state.empty? after add-then-remove-all reflects 'state was touched', not 'state is empty now'",
          %{snapshot: snapshot} do
       # Intentional post-simplification behavior: dropping the final
@@ -781,6 +846,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
   describe "load_reduced_state" do
     @moduletag :tmp_dir
 
+    @tag story: "US-APDELTA-27"
+
     test "returns nil for an empty directory", %{tmp_dir: tmp_dir} do
       snapshot = %{
         table: "missing",
@@ -793,6 +860,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
 
       assert Reducer.load_reduced_state(snapshot, opts) == nil
     end
+
+    @tag story: "US-APDELTA-28"
 
     test "rejects legacy full-state files with a clear error", %{tmp_dir: tmp_dir} do
       snapshot = %{
@@ -823,6 +892,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
         Reducer.load_reduced_state(snapshot, opts)
       end
     end
+
+    @tag story: "US-APDELTA-29"
 
     test "reduces a single delta to state", %{tmp_dir: tmp_dir} do
       snapshot = %{
@@ -872,6 +943,7 @@ defmodule AshPostgres.SnapshotDeltaTest do
   # =================================================================
 
   describe "create_table_options round-trip" do
+    @tag story: "US-APDELTA-30"
     test "CreateTable#create_table_options encode + decode preserves value" do
       ops = [
         %Operation.CreateTable{
@@ -892,6 +964,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       assert [%Operation.CreateTable{create_table_options: "WITH (fillfactor=70)"}] =
                decoded.operations
     end
+
+    @tag story: "US-APDELTA-31"
 
     test "Reducer preserves create_table_options on CreateTable — squash round-trip" do
       # Simulate a legacy squash: reduce a delta chain to state, then ask the
@@ -942,6 +1016,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       assert create.create_table_options == "WITH (fillfactor=70)",
              "create_table_options dropped by squash — got #{inspect(create.create_table_options)}"
     end
+
+    @tag story: "US-APDELTA-32"
 
     test "CreateTable hydrates base_filter and has_create_action on the reduced state" do
       # After the pseudo-op collapse, these scalars are carried on CreateTable
@@ -1044,6 +1120,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       })
     end
 
+    @tag story: "US-APDELTA-33"
+
     test "Add → Alter → Remove full lifecycle leaves attributes empty", %{empty: empty} do
       altered = %{@text_attribute | allow_nil?: false, default: "''"}
 
@@ -1057,6 +1135,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       state = remove_attr(state, altered)
       assert state.attributes == []
     end
+
+    @tag story: "US-APDELTA-34"
 
     test "Add → Rename → Remove (by new name) succeeds", %{empty: empty} do
       renamed = %{@text_attribute | source: :primary_email}
@@ -1072,6 +1152,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       assert state.attributes == []
     end
 
+    @tag story: "US-APDELTA-35"
+
     test "Add → Rename → Rename again (chained renames) follows the new identity",
          %{empty: empty} do
       r1 = %{@text_attribute | source: :primary_email}
@@ -1086,12 +1168,16 @@ defmodule AshPostgres.SnapshotDeltaTest do
       assert [%{source: :contact_email}] = state.attributes
     end
 
+    @tag story: "US-APDELTA-36"
+
     test "AlterAttribute on missing source raises conflict", %{empty: empty} do
       altered = %{@text_attribute | allow_nil?: false}
 
       assert {:threw, "AlterAttribute: attribute :email not present"} =
                throw_reason(fn -> alter_attr(empty, @text_attribute, altered) end)
     end
+
+    @tag story: "US-APDELTA-37"
 
     test "RenameAttribute where destination matches source (no-op rename) is allowed",
          %{empty: empty} do
@@ -1103,6 +1189,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       state = rename_attr(state, @text_attribute, altered)
       assert [%{source: :email, allow_nil?: false}] = state.attributes
     end
+
+    @tag story: "US-APDELTA-38"
 
     test "Remove → Add at the same source is allowed (re-add cycle)", %{empty: empty} do
       state =
@@ -1159,6 +1247,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       })
     end
 
+    @tag story: "US-APDELTA-39"
+
     test "Add → Remove leaves identities empty", %{empty: empty} do
       state =
         empty
@@ -1167,6 +1257,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
 
       assert state.identities == []
     end
+
+    @tag story: "US-APDELTA-40"
 
     test "Add same identity twice raises conflict", %{empty: empty} do
       state = add_unique_index(empty, @base_identity)
@@ -1178,6 +1270,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       assert reason =~ "unique_email"
     end
 
+    @tag story: "US-APDELTA-41"
+
     test "Remove non-existent identity raises conflict", %{empty: empty} do
       assert {:threw, reason} =
                throw_reason(fn -> remove_unique_index(empty, @base_identity) end)
@@ -1185,6 +1279,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       assert reason =~ "RemoveUniqueIndex"
       assert reason =~ "unique_email"
     end
+
+    @tag story: "US-APDELTA-42"
 
     test "Add → Rename to a different name succeeds and updates state", %{empty: empty} do
       renamed = %{@base_identity | name: :unique_primary_email}
@@ -1196,6 +1292,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
 
       assert [%{name: :unique_primary_email}] = state.identities
     end
+
+    @tag story: "US-APDELTA-43"
 
     test "Rename non-existent identity raises conflict", %{empty: empty} do
       assert {:threw, _} =
@@ -1223,6 +1321,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       }
     end
 
+    @tag story: "US-APDELTA-44"
+
     test "Add → Remove leaves check_constraints empty", %{empty: empty, constraint: c} do
       state =
         empty
@@ -1243,6 +1343,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
 
       assert state.check_constraints == []
     end
+
+    @tag story: "US-APDELTA-45"
 
     test "Add same constraint twice raises conflict", %{empty: empty, constraint: c} do
       state =
@@ -1267,6 +1369,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
 
       assert reason =~ "AddCheckConstraint"
     end
+
+    @tag story: "US-APDELTA-46"
 
     test "Remove non-existent constraint raises conflict", %{empty: empty, constraint: c} do
       assert {:threw, reason} =
@@ -1305,6 +1409,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       %{empty: Reducer.empty_state(snapshot), index: idx}
     end
 
+    @tag story: "US-APDELTA-47"
+
     test "Add → Remove cycles cleanly", %{empty: empty, index: idx} do
       state =
         empty
@@ -1324,6 +1430,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
 
       assert state.custom_indexes == []
     end
+
+    @tag story: "US-APDELTA-48"
 
     test "Add same custom index twice raises conflict", %{empty: empty, index: idx} do
       state =
@@ -1369,6 +1477,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       %{empty: Reducer.empty_state(snapshot), create: create}
     end
 
+    @tag story: "US-APDELTA-49"
+
     test "CreateTable → DropTable resets to empty state", %{empty: empty, create: create} do
       state =
         empty
@@ -1396,6 +1506,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       assert state.empty?
     end
 
+    @tag story: "US-APDELTA-50"
+
     test "CreateTable → DropTable → CreateTable can rebuild after a drop",
          %{empty: empty, create: create} do
       state =
@@ -1419,6 +1531,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       assert [%{source: :email}] = state.attributes
       refute state.empty?
     end
+
+    @tag story: "US-APDELTA-51"
 
     test "RenameTable updates state.table and rejects mismatched old_table",
          %{empty: empty, create: create} do
@@ -1448,6 +1562,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
 
       assert reason =~ "RenameTable expected old_table=\"wrong\""
     end
+
+    @tag story: "US-APDELTA-52"
 
     test "OptOutDropTable sets the flag without otherwise mutating state",
          %{empty: empty, create: create} do
@@ -1479,6 +1595,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
 
   describe "previous_hash chain validation" do
     @moduletag :tmp_dir
+
+    @tag story: "US-APDELTA-53"
 
     test "two deltas with matching previous→resulting hashes reduce cleanly",
          %{tmp_dir: tmp_dir} do
@@ -1527,6 +1645,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       state = Reducer.load_reduced_state(snapshot, opts)
       assert [%{source: :email}] = state.attributes
     end
+
+    @tag story: "US-APDELTA-54"
 
     test "previous_hash that doesn't match prior resulting_hash raises ConflictError",
          %{tmp_dir: tmp_dir} do
@@ -1579,6 +1699,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       end
     end
 
+    @tag story: "US-APDELTA-55"
+
     test "deltas without hash metadata still reduce — chain validation is opt-in",
          %{tmp_dir: tmp_dir} do
       snapshot = %{
@@ -1622,6 +1744,7 @@ defmodule AshPostgres.SnapshotDeltaTest do
   end
 
   describe "state_empty? consistency" do
+    @tag story: "US-APDELTA-56"
     test "CreateTable flips empty? to false even before any attribute ops", %{} do
       # Invariant: the Reducer treats any mutation of a scalar state field
       # (base_filter via CreateTable, has_create_action via CreateTable,
@@ -1664,6 +1787,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
 
   describe "long delta chain" do
     @moduletag :tmp_dir
+
+    @tag story: "US-APDELTA-57"
 
     test "reducing 100+ ops via direct apply_op yields the expected final state" do
       snapshot = %{
@@ -1767,6 +1892,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       end)
     end
 
+    @tag story: "US-APDELTA-58"
+
     test "reducing 60 delta files from disk in timestamp order yields the same state",
          %{tmp_dir: tmp_dir} do
       # Fans out the long-chain test across the on-disk path that codegen
@@ -1852,6 +1979,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
   describe "robustness" do
     @moduletag :tmp_dir
 
+    @tag story: "US-APDELTA-59"
+
     test "encoding the same op list with different map key orders produces the same JSON" do
       # The reducer uses `to_ordered_object/1` to sort keys before encoding.
       # If that ever regressed, two runs of the generator producing
@@ -1910,6 +2039,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       assert json_a == json_b,
              "encode_delta produced different bytes for logically-identical ops — to_ordered_object regressed"
     end
+
+    @tag story: "US-APDELTA-60"
 
     test "reducer applies deltas in timestamp order regardless of write order",
          %{tmp_dir: tmp_dir} do
@@ -1987,6 +2118,8 @@ defmodule AshPostgres.SnapshotDeltaTest do
       assert sources == [:second, :third],
              "Reducer applied deltas out of timestamp order. Got #{inspect(sources)}"
     end
+
+    @tag story: "US-APDELTA-61"
 
     test "reducer ignores non-delta files in the snapshot directory", %{tmp_dir: tmp_dir} do
       # Generators or VCS tools can drop garbage into the directory
