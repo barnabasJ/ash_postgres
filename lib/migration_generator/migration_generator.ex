@@ -2523,7 +2523,10 @@ defmodule AshPostgres.MigrationGenerator do
     # inline primary-key flags were removed for SQL rendering. SQL ordering is
     # determined separately by the native operation dependency graph.
     {temporal_primary_keys, pkey_operations} =
-      Enum.split_with(pkey_operations, &match?(%Operation.AddPrimaryKey{temporal: %{strategy: :context}}, &1))
+      Enum.split_with(
+        pkey_operations,
+        &match?(%Operation.AddPrimaryKey{temporal: %{strategy: :context}}, &1)
+      )
 
     # Schema moves must run before operations rendered against the new schema.
     [

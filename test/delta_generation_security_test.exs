@@ -108,18 +108,23 @@ defmodule AshPostgres.DeltaGenerationSecurityTest do
     end
 
     temporal do
-      strategy :context
-      attribute :valid_at
+      strategy(:context)
+      attribute(:valid_at)
     end
 
     attributes do
-      attribute :id, :integer, primary_key?: true, allow_nil?: false
-      attribute :other_id, :integer, primary_key?: true, allow_nil?: false
+      attribute(:id, :integer, primary_key?: true, allow_nil?: false)
+      attribute(:other_id, :integer, primary_key?: true, allow_nil?: false)
 
-      attribute :valid_at, Ash.Type.Range,
+      attribute(:valid_at, Ash.Type.Range,
         allow_nil?: false,
-        constraints: [inner_type: :datetime, inner_constraints: [precision: :microsecond],
-                      lower: [inclusive?: true], upper: [inclusive?: false]]
+        constraints: [
+          inner_type: :datetime,
+          inner_constraints: [precision: :microsecond],
+          lower: [inclusive?: true],
+          upper: [inclusive?: false]
+        ]
+      )
     end
   end
 
@@ -132,18 +137,23 @@ defmodule AshPostgres.DeltaGenerationSecurityTest do
     end
 
     temporal do
-      strategy :context
-      attribute :valid_at
+      strategy(:context)
+      attribute(:valid_at)
     end
 
     attributes do
-      attribute :id, :integer, primary_key?: true, allow_nil?: false
-      attribute :other_id, :integer, allow_nil?: false
+      attribute(:id, :integer, primary_key?: true, allow_nil?: false)
+      attribute(:other_id, :integer, allow_nil?: false)
 
-      attribute :valid_at, Ash.Type.Range,
+      attribute(:valid_at, Ash.Type.Range,
         allow_nil?: false,
-        constraints: [inner_type: :datetime, inner_constraints: [precision: :microsecond],
-                      lower: [inclusive?: true], upper: [inclusive?: false]]
+        constraints: [
+          inner_type: :datetime,
+          inner_constraints: [precision: :microsecond],
+          lower: [inclusive?: true],
+          upper: [inclusive?: false]
+        ]
+      )
     end
   end
 
@@ -151,7 +161,7 @@ defmodule AshPostgres.DeltaGenerationSecurityTest do
     use Ash.Domain
 
     resources do
-      resource CompositeKey
+      resource(CompositeKey)
     end
   end
 
@@ -159,7 +169,7 @@ defmodule AshPostgres.DeltaGenerationSecurityTest do
     use Ash.Domain
 
     resources do
-      resource ReducedKey
+      resource(ReducedKey)
     end
   end
 
@@ -267,12 +277,21 @@ defmodule AshPostgres.DeltaGenerationSecurityTest do
   end
 
   @tag story: "US-APDELTA-64"
-  test "the persisted reader rejects temporal foreign keys without logical attribute metadata", %{tmp_dir: tmp_dir} do
+  test "the persisted reader rejects temporal foreign keys without logical attribute metadata", %{
+    tmp_dir: tmp_dir
+  } do
     # Given persisted temporal FK data that lacks the logical attribute needed for reconstruction.
     [desired] = MigrationGenerator.get_snapshots(Subscription, [Tier, Subscription])
     options = generation_options(tmp_dir)
-    folder = MigrationGenerator.get_snapshot_path(desired, MigrationGenerator.get_snapshot_folder(desired, struct!(MigrationGenerator, options)))
+
+    folder =
+      MigrationGenerator.get_snapshot_path(
+        desired,
+        MigrationGenerator.get_snapshot_folder(desired, struct!(MigrationGenerator, options))
+      )
+
     File.mkdir_p!(folder)
+
     operation = %Operation.AddTemporalForeignKey{
       table: desired.table,
       column: :tier_id,
@@ -281,17 +300,21 @@ defmodule AshPostgres.DeltaGenerationSecurityTest do
       destination_attribute: :id,
       destination_period: "valid_at"
     }
+
     File.write!(Path.join(folder, "20261105000000.json"), Codec.encode_delta([operation]))
 
     # When the normal persisted-state reader reduces that delta.
     # Then it identifies the missing state instead of silently discarding the reference.
-    assert_raise Reducer.ConflictError, ~r/requires the original logical attribute metadata/, fn ->
-      Reducer.load_reduced_state(desired, struct!(MigrationGenerator, options))
-    end
+    assert_raise Reducer.ConflictError,
+                 ~r/requires the original logical attribute metadata/,
+                 fn ->
+                   Reducer.load_reduced_state(desired, struct!(MigrationGenerator, options))
+                 end
   end
 
   @tag story: "US-APDELTA-65"
-  test "removing a temporal primary-key member persists the complete new membership without codegen drift", %{tmp_dir: tmp_dir} do
+  test "removing a temporal primary-key member persists the complete new membership without codegen drift",
+       %{tmp_dir: tmp_dir} do
     # Given a real generated temporal table with a two-column primary key.
     options = generation_options(tmp_dir)
     generate(CompositeDomain, options)
@@ -307,8 +330,15 @@ defmodule AshPostgres.DeltaGenerationSecurityTest do
 
     # Then reduction clears its old flag and unchanged generation emits no additional files.
     assert primary_keys(state) == [:id]
-    assert Enum.sort_by(state.attributes, & &1.source) == Enum.sort_by(desired.attributes, & &1.source)
-    assert Enum.any?(persisted_operations(options), &match?(%Operation.AddPrimaryKey{keys: [:id], temporal: %{strategy: :context}}, &1))
+
+    assert Enum.sort_by(state.attributes, & &1.source) ==
+             Enum.sort_by(desired.attributes, & &1.source)
+
+    assert Enum.any?(
+             persisted_operations(options),
+             &match?(%Operation.AddPrimaryKey{keys: [:id], temporal: %{strategy: :context}}, &1)
+           )
+
     original_files = generated_files(tmp_dir)
     generate(ReducedDomain, options)
     assert generated_files(tmp_dir) == original_files
