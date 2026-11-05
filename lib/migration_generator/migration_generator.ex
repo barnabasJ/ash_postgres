@@ -2173,6 +2173,7 @@ defmodule AshPostgres.MigrationGenerator do
       |> Map.put_new(:has_create_action, true)
       |> Map.put_new(:drop_table_opted_out, false)
       |> Map.put_new(:base_filter, nil)
+      |> Map.put_new(:temporal, nil)
       |> Map.put_new(:create_table_options, nil)
       |> do_fetch_operations(nil, opts, [], MapSet.new())
 
@@ -2251,6 +2252,7 @@ defmodule AshPostgres.MigrationGenerator do
             old_multitenancy: empty_snapshot.multitenancy,
             create_table_options: snapshot.create_table_options,
             base_filter: Map.get(snapshot, :base_filter),
+            temporal: Map.get(snapshot, :temporal),
             has_create_action: Map.get(snapshot, :has_create_action, true)
           }
           | acc

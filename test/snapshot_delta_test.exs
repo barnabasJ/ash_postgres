@@ -85,6 +85,119 @@ defmodule AshPostgres.SnapshotDeltaTest do
 
   @base_multitenancy %{strategy: nil, attribute: nil, global: nil}
 
+  describe "upstream temporal operation compatibility" do
+    test "temporal and citext unique-index fields survive the delta round-trip" do
+      operation = %Operation.AddUniqueIndex{
+        table: "authors",
+        schema: nil,
+        multitenancy: @base_multitenancy,
+        old_multitenancy: @base_multitenancy,
+        identity: @base_identity,
+        temporal: %{strategy: :context, attribute: "valid_at"},
+        citext_keys: [:email]
+      }
+
+      assert %{operations: [^operation]} = operation |> List.wrap() |> Codec.encode_delta() |> Codec.decode_delta()
+      assert Operation.AddUniqueIndex.up(operation) =~ "EXCLUDE USING gist"
+      assert Operation.AddUniqueIndex.up(operation) =~ "lower(email::text)"
+      assert Operation.AddUniqueIndex.up(operation) =~ "valid_at WITH &&"
+    end
+
+    test "legacy unique-index deltas do not require the new renderer fields" do
+      operation = %Operation.AddUniqueIndex{
+        table: "authors",
+        schema: nil,
+        multitenancy: @base_multitenancy,
+        old_multitenancy: @base_multitenancy,
+        identity: @base_identity
+      }
+
+      json =
+        [operation]
+        |> Codec.encode_delta()
+        |> Jason.decode!()
+        |> Map.update!("operations", fn [encoded] ->
+          [encoded |> Map.drop(["temporal", "citext_keys"]) |> Map.put("insert_after_attribute_source", "email")]
+        end)
+        |> Jason.encode!()
+
+      assert %{operations: [%Operation.AddUniqueIndex{temporal: nil, citext_keys: []}]} =
+               Codec.decode_delta(json)
+    end
+
+    test "temporal foreign-key operations retain their actual SQL period fields" do
+      operation = %Operation.AddTemporalForeignKey{
+        schema: "public",
+        table: "subscriptions",
+        name: "subscriptions_tier_tfkey",
+        column: :tier_id,
+        source_period: "valid_at",
+        destination_schema: "public",
+        destination_table: "tiers",
+        destination_attribute: :id,
+        destination_period: "active_at"
+      }
+
+      assert %{operations: [^operation]} = operation |> List.wrap() |> Codec.encode_delta() |> Codec.decode_delta()
+      assert Operation.AddTemporalForeignKey.up(operation) =~ "PERIOD valid_at"
+      assert Operation.AddTemporalForeignKey.up(operation) =~ "PERIOD active_at"
+    end
+
+    test "initial temporal state survives codegen, the delta codec and reduction" do
+      empty = Reducer.empty_state(%{table: "temporal_records", schema: nil, repo: AshPostgres.TestRepo})
+      period = %{@text_attribute | source: :valid_at, type: :tstzrange, allow_nil?: false}
+
+      state = %{empty |
+        temporal: %{strategy: :context, attribute: "valid_at"},
+        attributes: [@base_attribute, period],
+        empty?: false
+      }
+
+      operations = AshPostgres.MigrationGenerator.initial_operations_for_state(state)
+      assert Enum.any?(operations, &match?(%Operation.AddPrimaryKey{temporal: %{strategy: :context}}, &1))
+      decoded = operations |> Codec.encode_delta() |> Codec.decode_delta()
+      assert Enum.reduce(decoded.operations, empty, &Reducer.apply_op(&2, &1)) == state
+      assert state |> Codec.encode_full_state() |> Codec.decode_full_state() == state
+    end
+  end
+
+  describe "upstream schema and sequence operation compatibility" do
+    test "schema moves survive the codec and update the reduced schema" do
+      state = Reducer.empty_state(%{table: "authors", schema: nil, repo: AshPostgres.TestRepo})
+
+      operation = %Operation.MoveTableSchema{
+        table: "authors",
+        schema: "archive",
+        old_schema: nil,
+        new_schema: "archive",
+        repo: AshPostgres.TestRepo,
+        multitenancy: @base_multitenancy
+      }
+
+      assert %{operations: [^operation]} =
+               operation |> List.wrap() |> Codec.encode_delta() |> Codec.decode_delta()
+
+      assert Reducer.apply_op(state, operation) == %{state | schema: "archive"}
+    end
+
+    test "serial sequence rendering preserves the paired attribute state" do
+      state = Reducer.empty_state(%{table: "authors", schema: nil, repo: AshPostgres.TestRepo})
+
+      operation = %Operation.SerialSequenceTransition{
+        table: "authors",
+        schema: nil,
+        column: :id,
+        transition: :remove,
+        statement: %{name: "sequence", up: "SELECT 1", down: "SELECT 2", code?: false}
+      }
+
+      assert %{operations: [^operation]} =
+               operation |> List.wrap() |> Codec.encode_delta() |> Codec.decode_delta()
+
+      assert Reducer.apply_op(state, operation) == state
+    end
+  end
+
   describe "codec delta round-trip" do
     test "simple AddAttribute round-trips" do
       op = %Operation.AddAttribute{

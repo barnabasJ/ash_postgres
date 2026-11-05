@@ -29,6 +29,7 @@ defmodule AshPostgres.MigrationGenerator.Operation.Codec do
     Operation.AddReferenceIndex => "add_reference_index",
     Operation.RemoveReferenceIndex => "remove_reference_index",
     Operation.AddPrimaryKey => "add_primary_key",
+    Operation.AddTemporalForeignKey => "add_temporal_foreign_key",
     Operation.AddPrimaryKeyDown => "add_primary_key_down",
     Operation.RemovePrimaryKey => "remove_primary_key",
     Operation.RemovePrimaryKeyDown => "remove_primary_key_down",
@@ -226,6 +227,7 @@ defmodule AshPostgres.MigrationGenerator.Operation.Codec do
       "repo" => op.repo,
       "create_table_options" => op.create_table_options,
       "base_filter" => op.base_filter,
+      "temporal" => op.temporal,
       "has_create_action" => op.has_create_action
     })
   end
@@ -316,7 +318,8 @@ defmodule AshPostgres.MigrationGenerator.Operation.Codec do
     base_op_json("add_unique_index", op.table, op.schema, op.multitenancy, %{
       "old_multitenancy" => encode_multitenancy(op.old_multitenancy),
       "identity" => encode_identity(op.identity),
-      "insert_after_attribute_source" => op.insert_after_attribute_source,
+      "temporal" => op.temporal,
+      "citext_keys" => op.citext_keys,
       "concurrently" => op.concurrently
     })
   end
@@ -371,6 +374,7 @@ defmodule AshPostgres.MigrationGenerator.Operation.Codec do
       "type" => "add_primary_key",
       "table" => op.table,
       "schema" => op.schema,
+      "temporal" => op.temporal,
       "keys" => op.keys
     }
   end
@@ -382,6 +386,21 @@ defmodule AshPostgres.MigrationGenerator.Operation.Codec do
       "schema" => op.schema,
       "keys" => op.keys,
       "remove_old?" => op.remove_old?
+    }
+  end
+
+  def encode_op(%Operation.AddTemporalForeignKey{} = op) do
+    %{
+      "type" => "add_temporal_foreign_key",
+      "schema" => op.schema,
+      "table" => op.table,
+      "name" => op.name,
+      "column" => op.column,
+      "source_period" => op.source_period,
+      "destination_schema" => op.destination_schema,
+      "destination_table" => op.destination_table,
+      "destination_attribute" => op.destination_attribute,
+      "destination_period" => op.destination_period
     }
   end
 
@@ -463,6 +482,7 @@ defmodule AshPostgres.MigrationGenerator.Operation.Codec do
       repo: decode_atom(m.repo),
       create_table_options: Map.get(m, :create_table_options),
       base_filter: Map.get(m, :base_filter),
+      temporal: decode_temporal(Map.get(m, :temporal)),
       # has_create_action defaults to true — the full-state historical default
       # for resources that have a create action, which is the vast majority.
       has_create_action: Map.get(m, :has_create_action, true)
@@ -578,7 +598,8 @@ defmodule AshPostgres.MigrationGenerator.Operation.Codec do
       multitenancy: decode_multitenancy(m.multitenancy),
       old_multitenancy: decode_multitenancy(Map.get(m, :old_multitenancy)),
       identity: decode_identity(m.identity, m.table),
-      insert_after_attribute_source: Map.get(m, :insert_after_attribute_source),
+      temporal: decode_temporal(Map.get(m, :temporal)),
+      citext_keys: decode_key_list(Map.get(m, :citext_keys, [])),
       concurrently: Map.get(m, :concurrently, false)
     }
   end
@@ -650,7 +671,22 @@ defmodule AshPostgres.MigrationGenerator.Operation.Codec do
     %Operation.AddPrimaryKey{
       table: m.table,
       schema: m.schema,
+      temporal: decode_temporal(Map.get(m, :temporal)),
       keys: decode_key_list(m.keys)
+    }
+  end
+
+  defp decode_op(Operation.AddTemporalForeignKey, m) do
+    %Operation.AddTemporalForeignKey{
+      schema: m.schema,
+      table: m.table,
+      name: Map.get(m, :name),
+      column: decode_atom(m.column),
+      source_period: m.source_period,
+      destination_schema: Map.get(m, :destination_schema),
+      destination_table: m.destination_table,
+      destination_attribute: decode_atom(m.destination_attribute),
+      destination_period: m.destination_period
     }
   end
 

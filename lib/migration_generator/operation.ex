@@ -171,6 +171,7 @@ defmodule AshPostgres.MigrationGenerator.Operation do
       :repo,
       :create_table_options,
       :base_filter,
+      :temporal,
       has_create_action: true
     ]
   end

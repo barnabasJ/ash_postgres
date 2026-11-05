@@ -82,6 +82,7 @@ defmodule AshPostgres.MigrationGenerator.Reducer do
       table: snapshot.table,
       repo: snapshot.repo,
       base_filter: nil,
+      temporal: nil,
       has_create_action: true,
       drop_table_opted_out: false,
       create_table_options: nil,
@@ -193,6 +194,7 @@ defmodule AshPostgres.MigrationGenerator.Reducer do
         multitenancy: op.multitenancy,
         create_table_options: op.create_table_options,
         base_filter: op.base_filter,
+        temporal: op.temporal,
         has_create_action: op.has_create_action,
         empty?: false
     }
@@ -213,6 +215,16 @@ defmodule AshPostgres.MigrationGenerator.Reducer do
     end
 
     %{state | table: op.table}
+  end
+
+  def apply_op(state, %Operation.MoveTableSchema{} = op) do
+    if state.schema != op.old_schema do
+      throw_conflict(
+        "MoveTableSchema expected old_schema=#{inspect(op.old_schema)} but current state schema=#{inspect(state.schema)}"
+      )
+    end
+
+    %{state | schema: op.new_schema}
   end
 
   def apply_op(state, %Operation.AddAttribute{attribute: attr}),
@@ -335,10 +347,21 @@ defmodule AshPostgres.MigrationGenerator.Reducer do
   def apply_op(state, %Operation.OptOutDropTable{}),
     do: %{state | drop_table_opted_out: true}
 
-  # State-neutral ops — persisted for migration round-trip fidelity but do not
-  # mutate the reduced state (their structural effect is captured by the
-  # paired AddAttribute/AlterAttribute/RemoveAttribute).
+  # Temporal primary keys are emitted separately from their attributes.
+  def apply_op(state, %Operation.AddPrimaryKey{temporal: %{strategy: :context} = temporal, keys: keys}) do
+    attributes =
+      Enum.map(state.attributes, fn attribute ->
+        if attribute.source in keys, do: %{attribute | primary_key?: true}, else: attribute
+      end)
+
+    %{state | temporal: temporal, attributes: attributes}
+  end
+
   def apply_op(state, %Operation.AddPrimaryKey{}), do: state
+
+  # These renderer operations have their logical state captured by paired attributes.
+  def apply_op(state, %Operation.AddTemporalForeignKey{}), do: state
+  def apply_op(state, %Operation.SerialSequenceTransition{}), do: state
   def apply_op(state, %Operation.AddPrimaryKeyDown{}), do: state
   def apply_op(state, %Operation.RemovePrimaryKey{}), do: state
   def apply_op(state, %Operation.RemovePrimaryKeyDown{}), do: state
