@@ -1280,9 +1280,9 @@ defmodule AshPostgres.MigrationGenerator do
           index?: merge_uniq!(references, table, :index?, name),
           index_where: merge_uniq!(references, table, :index_where, name),
           destination_attribute_default:
-            merge_uniq!(references, table, :destination_attribute_default, name),
+            merge_uniq!(references, table, :destination_attribute_default, name) || "nil",
           destination_attribute_generated:
-            merge_uniq!(references, table, :destination_attribute_generated, name),
+            merge_uniq!(references, table, :destination_attribute_generated, name) || false,
           multitenancy: merge_uniq!(references, table, :multitenancy, name),
           primary_key?: merge_uniq!(references, table, :primary_key?, name),
           on_delete: merge_uniq!(references, table, :on_delete, name),
@@ -2519,6 +2519,12 @@ defmodule AshPostgres.MigrationGenerator do
         _ -> true
       end)
 
+    # Persist temporal primary-key membership after the column operations whose
+    # inline primary-key flags were removed for SQL rendering. SQL ordering is
+    # determined separately by the native operation dependency graph.
+    {temporal_primary_keys, pkey_operations} =
+      Enum.split_with(pkey_operations, &match?(%Operation.AddPrimaryKey{temporal: %{strategy: :context}}, &1))
+
     # Schema moves must run before operations rendered against the new schema.
     [
       acc,
@@ -2536,7 +2542,8 @@ defmodule AshPostgres.MigrationGenerator do
       custom_indexes_to_remove,
       custom_statements_to_add,
       custom_statements_to_remove,
-      custom_statements_to_alter
+      custom_statements_to_alter,
+      temporal_primary_keys
     ]
     |> Enum.concat()
     |> Enum.map(&Map.put(&1, :multitenancy, snapshot.multitenancy))

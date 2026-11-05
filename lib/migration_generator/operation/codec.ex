@@ -176,7 +176,7 @@ defmodule AshPostgres.MigrationGenerator.Operation.Codec do
   """
   def decode_delta(json) when is_binary(json) do
     decoded =
-      case Jason.decode(json, keys: :atoms!) do
+      case Jason.decode(json, keys: &decode_delta_key/1) do
         {:ok, map} when is_map(map) ->
           map
 
@@ -822,7 +822,9 @@ defmodule AshPostgres.MigrationGenerator.Operation.Codec do
     end)
     |> Map.put_new(:schema, nil)
     |> Map.put_new(:destination_attribute_default, "nil")
+    |> Map.update!(:destination_attribute_default, &(&1 || "nil"))
     |> Map.put_new(:destination_attribute_generated, false)
+    |> Map.update!(:destination_attribute_generated, &(&1 || false))
     |> Map.put_new(:on_delete, nil)
     |> Map.put_new(:on_update, nil)
     |> Map.update!(:on_delete, &(&1 && load_references_on_delete(&1)))
@@ -1005,6 +1007,12 @@ defmodule AshPostgres.MigrationGenerator.Operation.Codec do
 
   defp decode_atom(nil), do: nil
   defp decode_atom(value), do: maybe_to_atom(value)
+
+  # Historical delta JSON can contain the placement field removed from the
+  # native AddUniqueIndex struct. Keep that ignored key binary; all supported
+  # keys retain the existing-atom-only decoding contract.
+  defp decode_delta_key("insert_after_attribute_source"), do: "insert_after_attribute_source"
+  defp decode_delta_key(key), do: String.to_existing_atom(key)
 
   defp rewrite(map, keys) do
     Enum.reduce(keys, map, fn {key, to}, map ->

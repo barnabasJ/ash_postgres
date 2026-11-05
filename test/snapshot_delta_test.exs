@@ -347,6 +347,20 @@ defmodule AshPostgres.SnapshotDeltaTest do
       assert [%Operation.AddAttribute{attribute: a}] = decoded.operations
       assert a.references.on_delete == {:nilify, [:post_id]}
       assert a.references.on_update == :update
+      assert a.references.destination_attribute_default == "nil"
+      assert a.references.destination_attribute_generated == false
+
+      generated_reference = %{
+        attr_with_ref.references
+        | destination_attribute_default: "fragment(\"gen_random_uuid()\")",
+          destination_attribute_generated: true
+      }
+
+      generated_operation = %{op | attribute: %{attr_with_ref | references: generated_reference}}
+      generated_delta = [generated_operation] |> Codec.encode_delta() |> Codec.decode_delta()
+      assert [%Operation.AddAttribute{attribute: generated_attribute}] = generated_delta.operations
+      assert generated_attribute.references.destination_attribute_default == "fragment(\"gen_random_uuid()\")"
+      assert generated_attribute.references.destination_attribute_generated == true
     end
 
     @tag story: "US-APDELTA-12"

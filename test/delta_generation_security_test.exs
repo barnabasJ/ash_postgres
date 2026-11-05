@@ -99,6 +99,70 @@ defmodule AshPostgres.DeltaGenerationSecurityTest do
     end
   end
 
+  defmodule CompositeKey do
+    use Ash.Resource, domain: nil, data_layer: AshPostgres.DataLayer
+
+    postgres do
+      table "delta_security_primary_keys"
+      repo AshPostgres.TemporalTestRepo
+    end
+
+    temporal do
+      strategy :context
+      attribute :valid_at
+    end
+
+    attributes do
+      attribute :id, :integer, primary_key?: true, allow_nil?: false
+      attribute :other_id, :integer, primary_key?: true, allow_nil?: false
+
+      attribute :valid_at, Ash.Type.Range,
+        allow_nil?: false,
+        constraints: [inner_type: :datetime, inner_constraints: [precision: :microsecond],
+                      lower: [inclusive?: true], upper: [inclusive?: false]]
+    end
+  end
+
+  defmodule ReducedKey do
+    use Ash.Resource, domain: nil, data_layer: AshPostgres.DataLayer
+
+    postgres do
+      table "delta_security_primary_keys"
+      repo AshPostgres.TemporalTestRepo
+    end
+
+    temporal do
+      strategy :context
+      attribute :valid_at
+    end
+
+    attributes do
+      attribute :id, :integer, primary_key?: true, allow_nil?: false
+      attribute :other_id, :integer, allow_nil?: false
+
+      attribute :valid_at, Ash.Type.Range,
+        allow_nil?: false,
+        constraints: [inner_type: :datetime, inner_constraints: [precision: :microsecond],
+                      lower: [inclusive?: true], upper: [inclusive?: false]]
+    end
+  end
+
+  defmodule CompositeDomain do
+    use Ash.Domain
+
+    resources do
+      resource CompositeKey
+    end
+  end
+
+  defmodule ReducedDomain do
+    use Ash.Domain
+
+    resources do
+      resource ReducedKey
+    end
+  end
+
   defmodule AfterMove do
     use Ash.Resource, domain: nil, data_layer: AshPostgres.DataLayer
 
@@ -224,6 +288,34 @@ defmodule AshPostgres.DeltaGenerationSecurityTest do
     assert_raise Reducer.ConflictError, ~r/requires the original logical attribute metadata/, fn ->
       Reducer.load_reduced_state(desired, struct!(MigrationGenerator, options))
     end
+  end
+
+  @tag story: "US-APDELTA-65"
+  test "removing a temporal primary-key member persists the complete new membership without codegen drift", %{tmp_dir: tmp_dir} do
+    # Given a real generated temporal table with a two-column primary key.
+    options = generation_options(tmp_dir)
+    generate(CompositeDomain, options)
+    [initial] = MigrationGenerator.get_snapshots(CompositeKey, [CompositeKey])
+    before = Reducer.load_reduced_state(initial, struct!(MigrationGenerator, options))
+    assert primary_keys(before) == [:id, :other_id]
+
+    # When public generation removes other_id from the key and persists the native operations.
+    generate(ReducedDomain, options)
+    [desired] = MigrationGenerator.get_snapshots(ReducedKey, [ReducedKey])
+    desired = desired |> Codec.encode_full_state() |> Codec.decode_full_state()
+    state = Reducer.load_reduced_state(desired, struct!(MigrationGenerator, options))
+
+    # Then reduction clears its old flag and unchanged generation emits no additional files.
+    assert primary_keys(state) == [:id]
+    assert Enum.sort_by(state.attributes, & &1.source) == Enum.sort_by(desired.attributes, & &1.source)
+    assert Enum.any?(persisted_operations(options), &match?(%Operation.AddPrimaryKey{keys: [:id], temporal: %{strategy: :context}}, &1))
+    original_files = generated_files(tmp_dir)
+    generate(ReducedDomain, options)
+    assert generated_files(tmp_dir) == original_files
+  end
+
+  defp primary_keys(state) do
+    state.attributes |> Enum.filter(& &1.primary_key?) |> Enum.map(& &1.source) |> Enum.sort()
   end
 
   defp generation_options(tmp_dir) do

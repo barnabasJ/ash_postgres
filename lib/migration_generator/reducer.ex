@@ -354,7 +354,7 @@ defmodule AshPostgres.MigrationGenerator.Reducer do
       }) do
     attributes =
       Enum.map(state.attributes, fn attribute ->
-        if attribute.source in keys, do: %{attribute | primary_key?: true}, else: attribute
+        %{attribute | primary_key?: attribute.source in keys}
       end)
 
     %{state | temporal: temporal, attributes: attributes}

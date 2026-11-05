@@ -68,3 +68,4 @@ These stories cover the persisted delta protocol, reduction invariants and real 
 | [US-APDELTA-62](US-APDELTA-62.md) | Persist temporal relationship state through real code generation |
 | [US-APDELTA-63](US-APDELTA-63.md) | Keep the full delta history when a resource moves schemas |
 | [US-APDELTA-64](US-APDELTA-64.md) | Reject incomplete temporal foreign-key delta state |
+| [US-APDELTA-65](US-APDELTA-65.md) | Remove a temporal primary-key member without codegen drift |
